@@ -88,7 +88,7 @@
 ## 仓库与帮助
 
 - 插件仓库： https://github.com/lhl77/Typecho-Plugin-LinksPlus
-- 使用帮助 / 旧文档： https://blog.lhl.one/artical/902.html 
+- 使用帮助： https://blog.lhl.one/artical/902.html 
 
 如果你需要更详细的开发/模板示例，可以在仓库 Issues 或 PR 提问。
 
