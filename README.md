@@ -9,7 +9,9 @@
 [![Status](https://img.shields.io/badge/Status-Active-success)](#)
 
 友情链接增强插件，支持多模板、短代码、正文重写、内置友链卡片展示主题、后台友链管理。
+
 修改自第三方维护者版本v1.2.7: https://github.com/Mejituu/Links
+
 原作者：https://www.imhan.com/archives/typecho-links/
 
 ---
