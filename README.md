@@ -51,10 +51,6 @@
 ### 模板选择
 - 支持文件模板（`templates/<name>/`），`manifest.json` 控制 CSS/JS 注入。
 
-### 短代码 `[links_plus]`
-- 在配置中启用后，正文内使用 `[links_plus]` 即可动态输出友链。
-- 支持参数示例：`[links_plus num=6 sort=friends size=48 template=mirages-html]`
-
 ### 正文重写
 - 当主题不走 `contentEx` 导致 `<links>...</links>` 无法解析时，可使用“正文重写”将占位符替换为友链 HTML。
 - 支持按 `cid` 重写、块标记 `<!-- LINKS_PLUS_START -->...<!-- LINKS_PLUS_END -->`，并可选择输出模板。
@@ -73,13 +69,6 @@
 
 ---
 
-## 短代码与标签示例
-
-- 短代码：`[links_plus]` 或带参数 ` [links_plus num=8 sort=blog template=md3-cards]`
-- 标签：`<links 10 friends 48>SHOW_IMG</links>`（向后兼容）
-
----
-
 ## 后台管理
 
 - 后台 → 扩展 → 友情链接（管理界面为 MD3 风格卡片与表格管理）
@@ -87,21 +76,12 @@
 
 ---
 
-## 更新与版本检查
-
-- 插件配置页提供 GitHub tags 版本检查（按 tag 名称 `vX.Y.Z` 对比）。
-
----
-
 ## 常见问题
 
-1. 短代码/标签未生效
-- 检查是否已在插件设置中启用短代码；主题若直接打印数据库内容未走 `contentEx`，请使用正文重写功能。
+1. 样式被主题覆盖
+- 尽力避免使用 `<a>` 标签直接输出，模板采用 `role="link"` + `data-href` 的跳转方案；如仍被覆盖可在自定义模板中引入更强选择器或 `!important`。
 
-2. 样式被主题覆盖
-- 已尽力避免使用 `<a>` 标签直接输出，模板采用 `role="link"` + `data-href` 的跳转方案；如仍被覆盖可在自定义模板中引入更强选择器或 `!important`。
-
-3. 模板资源未注入
+2. 模板资源未注入
 - 确认模板下 `manifest.json` 中 `inject.css`/`inject.js` 设置为 `true` 并且前端没有被 CSP 等策略阻止。
 
 ---
@@ -109,7 +89,7 @@
 ## 仓库与帮助
 
 - 插件仓库： https://github.com/lhl77/Typecho-Plugin-LinksPlus
-- 使用帮助 / 旧文档： https://2dph.com/archives/typecho-links-help.html
+- 使用帮助 / 旧文档： https://blog.lhl.one/artical/902.html 
 
 如果你需要更详细的开发/模板示例，可以在仓库 Issues 或 PR 提问。
 
