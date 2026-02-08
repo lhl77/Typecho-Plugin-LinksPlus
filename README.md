@@ -1,4 +1,4 @@
-# Typecho 插件：Links Plus（友情链接增强版）
+# Typecho 插件：Links Plus（友链管理增强版）
 
 [![Latest tag](https://img.shields.io/github/v/tag/lhl77/Typecho-Plugin-LinksPlus?label=tag&sort=semver)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/tags)
 [![Release](https://img.shields.io/github/v/release/lhl77/Typecho-Plugin-LinksPlus?label=release&sort=semver)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/releases)
@@ -8,20 +8,19 @@
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D7.2-777bb4?logo=php&logoColor=white)](https://www.php.net/)
 [![Status](https://img.shields.io/badge/Status-Active-success)](#)
 
-友情链接增强插件，支持多模板、短代码、正文重写、MD3 / Mirages 卡片展示、后台友链管理与前端版本检测。
+友情链接增强插件，支持多模板、短代码、正文重写、内置友链卡片展示主题、后台友链管理。
 
 ---
 
-## 功能清单
+## 增强版功能清单
 
-- 多模板输出（内置 `md3-cards`, `mirages-html`，支持自定义模板目录 `templates/`）
-- 可选短代码 `[links_plus]`（动态输出友链，无需重写正文）
-- 支持 `<links>...</links>` 标签与参数（向后兼容）
+- 多模板输出（内置主题，支持自定义模板目录 `templates/`）
+- 模板可携带 CSS/JS 注入，支持模板级别交互
 - 正文重写（支持按 cid 重写、块标记、可多次重写）
+
+## 原版功能保留
+- 支持 `<links>...</links>` 标签与参数（向后兼容）
 - 后台友链管理：添加/编辑/分类/拖拽排序/启用禁用
-- 响应式卡片网格、暗色模式适配、避免主题全局 a{} 覆盖（使用 role=link）
-- 模板可携带 CSS/JS 注入，支持模板级别交互（ripple、键盘访问等）
-- 配置页内置 GitHub 版本检查
 
 ---
 
