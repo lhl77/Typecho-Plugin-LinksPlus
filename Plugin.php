@@ -626,7 +626,8 @@ LINKS_PLUS_UPDATE_JS
         <a href="' . Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', Helper::options()->adminUrl) . '" class="md3-btn-text">管理友链</a>
     <a href="https://github.com/lhl77/Typecho-Plugin-LinksPlus" target="_blank" class="md3-btn-text">GitHub</a>
     <a id="links-plus-check-update" href="#" class="md3-btn-text">检查更新</a>
-        <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">使用帮助文档</a>
+    <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">使用帮助文档</a>
+    <a href="https://github.com/lhl77/Typecho-Plugin-LinksPlus/issues" target="_blank" class="md3-btn-text">反馈</a>
     </div>
 </div>
 
@@ -747,20 +748,15 @@ LINKS_PLUS_UPDATE_JS
             '<div class="md3-title">正文重写</div>
     <div class="md3-body">
         <p>当主题没有通过 <code>$this->content()</code> 输出正文，导致 <code>&lt;links&gt;...&lt;/links&gt;</code> 不解析时，可用“正文重写工具”把正文中的占位符替换为友链 HTML。</p>
-        <p>固定占位符：<code>' . self::REWRITE_PLACEHOLDER . '</code></p>
-    </div>'
+        <p>固定占位符：<span class="md3-chip" style="font-weight:bold;">' . self::REWRITE_PLACEHOLDER . '</span></p>
+    <span class="md3-chip">建议</span>
+        <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span><br><br>
+    <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">查看主题开发文档</a>
+    
+        </div>'
         );
         $form->addItem($temHelp);
 
-        $rewHelp = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
-        $rewHelp->html(
-            '<div class="md3-title">模板与输出</div>
-    <div class="md3-body">
-        <span class="md3-chip">建议</span>
-        <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span>
-    </div>'
-        );
-        $form->addItem($rewHelp);
 
         /**
          * 按 cid 重写正文输出（绕过主题不走 contentEx 的情况）
