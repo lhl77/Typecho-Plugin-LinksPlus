@@ -450,7 +450,7 @@ textarea:focus, input[type="text"]:focus, select:focus {
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.2.7";
+    var CURRENT = "v1.3.0";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
