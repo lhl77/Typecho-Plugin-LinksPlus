@@ -14,6 +14,8 @@
 
 原作者：https://www.imhan.com/archives/typecho-links/
 
+![截图](/templates/md3-cards/image.png)
+
 ---
 
 ## 目录
