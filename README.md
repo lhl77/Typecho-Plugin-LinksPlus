@@ -100,7 +100,7 @@
 - 可选文件：`style.css`、`script.js`（`manifest.json` 中 `inject` 决定是否注入）。
 - 模板占位符：`{name}` `{url}` `{image}` `{description}` `{sort}` `{lid}` 等。
 
-### 主题开发请查阅：https://blog.lhl.one/artical/902.html
+### 查看全部主题/主题开发文档：https://blog.lhl.one/artical/902.html
 
 ---
 
