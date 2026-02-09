@@ -349,7 +349,109 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->on($this->request->is('do=sort'))->sortLink();
         $this->on($this->request->is('do=email-logo'))->emailLogo();
     $this->on($this->request->is('do=rewrite'))->rewriteContents();
+        $this->on($this->request->is('do=update_templates'))->updateTemplates();
         $this->response->redirect($this->options->adminUrl);
+    }
+
+    /**
+     * 从 GitHub 下载 templates 并覆盖本地 templates 目录
+     */
+    public function updateTemplates()
+    {
+        // 仅管理员可操作（action() 已授权）
+        $zipUrl = 'https://github.com/lhl77/Typecho-Plugin-LinksPlus/archive/refs/heads/main.zip';
+        $tmpZip = sys_get_temp_dir() . '/links_templates_' . time() . '.zip';
+        $tmpDir = sys_get_temp_dir() . '/links_templates_dir_' . time();
+
+        // 下载 ZIP
+        $context = stream_context_create(array('http' => array('timeout' => 30)));
+        $data = @file_get_contents($zipUrl, false, $context);
+        if (!$data) {
+            $this->widget('Widget_Notice')->set(_t('下载失败：无法从 GitHub 获取模板压缩包。'), null, 'notice');
+            $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+            return;
+        }
+        file_put_contents($tmpZip, $data);
+
+        // 解压到临时目录
+        $zip = new ZipArchive();
+        if ($zip->open($tmpZip) !== true) {
+            @unlink($tmpZip);
+            $this->widget('Widget_Notice')->set(_t('解压失败：无法打开下载的压缩包。'), null, 'notice');
+            $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+            return;
+        }
+        @mkdir($tmpDir, 0755, true);
+        $zip->extractTo($tmpDir);
+        $zip->close();
+
+        // 源模板目录（zip 中的路径）
+        $srcTemplates = $tmpDir . '/Typecho-Plugin-LinksPlus-main/templates';
+        $dstTemplates = dirname(__FILE__) . '/templates';
+
+        if (!is_dir($srcTemplates)) {
+            // 清理
+            @unlink($tmpZip);
+            // 递归删除 tmpDir
+            $this->rrmdir($tmpDir);
+            $this->widget('Widget_Notice')->set(_t('模板包中未找到 templates 目录，操作已取消。'), null, 'notice');
+            $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+            return;
+        }
+
+        // 备份现有 templates（如存在）
+        if (is_dir($dstTemplates)) {
+            $backup = dirname(__FILE__) . '/templates_backup_' . date('YmdHis');
+            @rename($dstTemplates, $backup);
+        }
+
+        // 复制新模板到目标
+        $ok = $this->rcopy($srcTemplates, $dstTemplates);
+
+        // 清理临时文件
+        @unlink($tmpZip);
+        $this->rrmdir($tmpDir);
+
+        if ($ok) {
+            $this->widget('Widget_Notice')->set(_t('模板已成功更新并覆盖到 plugins/Links/templates（旧模板已备份）。'), null, 'success');
+        } else {
+            $this->widget('Widget_Notice')->set(_t('模板更新失败，请检查文件权限。'), null, 'notice');
+        }
+
+        $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+    }
+
+    // 递归复制目录
+    private function rcopy($src, $dst)
+    {
+        if (!is_dir($src)) return false;
+        @mkdir($dst, 0755, true);
+        $dir = opendir($src);
+        if (!$dir) return false;
+        while (false !== ($file = readdir($dir))) {
+            if ($file == '.' || $file == '..') continue;
+            $s = $src . DIRECTORY_SEPARATOR . $file;
+            $d = $dst . DIRECTORY_SEPARATOR . $file;
+            if (is_dir($s)) {
+                $this->rcopy($s, $d);
+            } else {
+                @copy($s, $d);
+            }
+        }
+        closedir($dir);
+        return true;
+    }
+
+    // 递归删除目录
+    private function rrmdir($dir)
+    {
+        if (!is_dir($dir)) return;
+        $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($files as $fileinfo) {
+            $todo = ($fileinfo->isDir() ? 'rmdir' : 'unlink');
+            @$todo($fileinfo->getRealPath());
+        }
+        @rmdir($dir);
     }
 }
 

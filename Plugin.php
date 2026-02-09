@@ -752,11 +752,34 @@ LINKS_PLUS_UPDATE_JS
         <p>固定占位符：<span class="md3-chip" style="font-weight:bold;">' . self::REWRITE_PLACEHOLDER . '</span></p>
     <span class="md3-chip">建议</span>
         <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span><br><br>
+    <a id="links-plus-get-templates" href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text">获取最新主题</a>
     <a href="https://blog.lhl.one/artical/902.html#主题" target="_blank" class="md3-btn-text">查看全部主题/开发文档</a>
     
+    <div class="lp-update-out" style="margin-top:12px"></div>
         </div>'
         );
         $form->addItem($temHelp);
+
+        // 前端脚本：获取最新主题按钮行为 — 调用后由服务器端执行下载并覆盖 templates（会备份原有 templates）
+                $script = <<<'SCRIPT'
+        <script>
+        document.addEventListener('DOMContentLoaded', function(){
+            var btn = document.getElementById('links-plus-get-templates');
+            if(!btn) return;
+            btn.addEventListener('click', function(e){
+                e.preventDefault();
+                if(!confirm('将从 GitHub 下载并覆盖本插件的 templates 目录（会先备份原有 templates），确定继续？')) return;
+                var host = btn.closest ? btn.closest('.md3-card') : null;
+                var out = host ? host.querySelector('.lp-update-out') : null;
+                if(out){ out.innerHTML = '<div class="lp-update-note is-working"><div class="lp-update-title">更新中</div><div class="lp-update-body">正在从 GitHub 下载并更新模板，页面将跳转，请稍候…</div></div>'; }
+                try{ btn.setAttribute('aria-disabled','true'); btn.classList.add('is-disabled'); }catch(e){}
+                // 导航到 action 链接，服务器端处理下载/解压/覆盖逻辑
+                window.location.href = btn.getAttribute('href');
+            }, false);
+        });
+        </script>
+        SCRIPT;
+                echo $script;
 
 
         /**
