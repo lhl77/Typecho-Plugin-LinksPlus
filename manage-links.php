@@ -313,6 +313,7 @@ include 'menu.php';
                 </div>
                 <div class="md3-appbar-actions">
                     <a class="md3-btn tonal" href="<?php $options->adminUrl('options-plugin.php?config=Links'); ?>"><?php _e('设置'); ?></a>
+                    
                     <a class="md3-btn" href="https://blog.lhl.one/artical/902.html " target="_blank"><?php _e('帮助'); ?></a>
                     <a class="md3-btn primary" href="<?php $security->index('/action/links-edit?do=rewrite'); ?>" title="将指定 cid 文章正文中的 {{links_plus}} 占位符替换为友链 HTML" onclick="return confirm('确认要执行正文重写吗？该操作会直接修改文章/页面正文内容。');"><?php _e('执行重写'); ?></a>
                 </div>

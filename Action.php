@@ -342,7 +342,6 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
         $this->on($this->request->is('do=insert'))->insertLink();
-        $this->on($this->request->is('do=addMejituu'))->addMejituu();
         $this->on($this->request->is('do=update'))->updateLink();
         $this->on($this->request->is('do=delete'))->deleteLink();
         $this->on($this->request->is('do=enable'))->enableLink();

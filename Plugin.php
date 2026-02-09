@@ -5,9 +5,12 @@
  * 
  * @package Links Plus
  * @author LHL
- * @version 1.3.0
+ * @version 1.3.1
  * @dependence 14.10.10-*
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
+ * 
+ * version 1.3.1 at 2025-02-09 by LHL
+ * 优化 一些细节
  * 
  * version 1.3.0 at 2025-02-09 by LHL
  * 优化 UI - Material Design 3
@@ -224,8 +227,6 @@ class Links_Plugin implements Typecho_Plugin_Interface
     public static function activate()
     {
         $info = Links_Plugin::linksInstall();
-        // 菜单入口：仿照 Utils\Helper::addMenu + addPanel 的写法。
-        // 这里不依赖特定版本 Typecho 是否存在 addMenu，失败则静默回退到 addPanel(3, ...)。
         try {
             $menuIndex = Helper::addMenu('Links Plus');
             Helper::addPanel($menuIndex, 'Links/manage-links.php', _t('友情链接'), _t('管理友情链接'), 'administrator');
@@ -236,10 +237,10 @@ class Links_Plugin implements Typecho_Plugin_Interface
         }
         
     Helper::addAction('links-edit', 'Links_Action');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Links_Plugin', 'parse');
-        Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Links_Plugin', 'parse');
-        Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Links_Plugin', 'parse');
-        Typecho_Plugin::factory('Widget_Archive')->callLinks = array('Links_Plugin', 'output_str');
+        // Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Links_Plugin', 'parse');
+        // Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Links_Plugin', 'parse');
+        // Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Links_Plugin', 'parse');
+        // Typecho_Plugin::factory('Widget_Archive')->callLinks = array('Links_Plugin', 'output_str');
         return _t($info);
     }
 
@@ -450,7 +451,7 @@ textarea:focus, input[type="text"]:focus, select:focus {
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.3.0";
+    var CURRENT = "v1.3.1";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
@@ -626,7 +627,7 @@ LINKS_PLUS_UPDATE_JS
         <a href="' . Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', Helper::options()->adminUrl) . '" class="md3-btn-text">管理友链</a>
     <a href="https://github.com/lhl77/Typecho-Plugin-LinksPlus" target="_blank" class="md3-btn-text">GitHub</a>
     <a id="links-plus-check-update" href="#" class="md3-btn-text">检查更新</a>
-    <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">使用帮助文档</a>
+    <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">帮助文档</a>
     <a href="https://github.com/lhl77/Typecho-Plugin-LinksPlus/issues" target="_blank" class="md3-btn-text">反馈</a>
     </div>
 </div>
@@ -751,7 +752,7 @@ LINKS_PLUS_UPDATE_JS
         <p>固定占位符：<span class="md3-chip" style="font-weight:bold;">' . self::REWRITE_PLACEHOLDER . '</span></p>
     <span class="md3-chip">建议</span>
         <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span><br><br>
-    <a href="https://blog.lhl.one/artical/902.html" target="_blank" class="md3-btn-text">查看主题开发文档</a>
+    <a href="https://blog.lhl.one/artical/902.html#主题" target="_blank" class="md3-btn-text">查看全部主题/开发文档</a>
     
         </div>'
         );
@@ -785,7 +786,7 @@ LINKS_PLUS_UPDATE_JS
             'rewrite_pattern',
             $rewriteModeOptions,
             'SHOW_TEXT',
-            _t('重写输出模式'),
+            _t('重写输出主题'),
             _t('把占位符替换成哪种模式输出,也可以直接选择某个文件模板。')
         );
         $form->addInput($rewritePattern);
@@ -810,7 +811,6 @@ LINKS_PLUS_UPDATE_JS
         //     _t('开启后，文章正文中使用 [links_plus] 将被动态替换为友链 HTML（不写回正文）。')
         // );
         // $form->addInput($enableShortcode);
-        $form->addInput($rewriteNum->addRule('isInteger', _t('请填写整数数字')));
         
         $rewriteSort = new Typecho_Widget_Helper_Form_Element_Text(
             'rewrite_sort',
