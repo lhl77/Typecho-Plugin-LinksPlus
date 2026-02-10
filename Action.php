@@ -363,6 +363,13 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $tmpZip = sys_get_temp_dir() . '/links_templates_' . time() . '.zip';
         $tmpDir = sys_get_temp_dir() . '/links_templates_dir_' . time();
 
+        // 检查环境
+        if (!class_exists('ZipArchive')) {
+            $this->widget('Widget_Notice')->set(_t('服务器环境缺少 ZipArchive 扩展，无法解压模板包，请联系主机提供商安装。'), null, 'notice');
+            $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+            return;
+        }
+
         // 下载 ZIP
         $context = stream_context_create(array('http' => array('timeout' => 30)));
         $data = @file_get_contents($zipUrl, false, $context);
@@ -385,39 +392,133 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $zip->extractTo($tmpDir);
         $zip->close();
 
-        // 源模板目录（zip 中的路径）
-        $srcTemplates = $tmpDir . '/Typecho-Plugin-LinksPlus-main/templates';
-        $dstTemplates = dirname(__FILE__) . '/templates';
+        // 识别压缩包内的 templates 目录（支持不同根目录名）
+        $srcTemplates = null;
+        // 直接检查根下是否有 templates
+        if (is_dir($tmpDir . DIRECTORY_SEPARATOR . 'templates')) {
+            $srcTemplates = $tmpDir . DIRECTORY_SEPARATOR . 'templates';
+        } else {
+            // 检查每个一级子目录（例如 Typecho-Plugin-LinksPlus-main/templates）
+            $entries = @scandir($tmpDir);
+            if ($entries && is_array($entries)) {
+                foreach ($entries as $entry) {
+                    if ($entry === '.' || $entry === '..') continue;
+                    $candidate = $tmpDir . DIRECTORY_SEPARATOR . $entry . DIRECTORY_SEPARATOR . 'templates';
+                    if (is_dir($candidate)) {
+                        $srcTemplates = $candidate;
+                        break;
+                    }
+                }
+            }
+        }
 
-        if (!is_dir($srcTemplates)) {
+        $dstTemplates = dirname(__FILE__) . DIRECTORY_SEPARATOR . 'templates';
+
+        if ($srcTemplates === null || !is_dir($srcTemplates)) {
             // 清理
             @unlink($tmpZip);
-            // 递归删除 tmpDir
             $this->rrmdir($tmpDir);
             $this->widget('Widget_Notice')->set(_t('模板包中未找到 templates 目录，操作已取消。'), null, 'notice');
             $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
             return;
         }
 
-        // 备份现有 templates（如存在）
-        if (is_dir($dstTemplates)) {
-            $backup = dirname(__FILE__) . '/templates_backup_' . date('YmdHis');
-            @rename($dstTemplates, $backup);
+        // 检查目标目录可写
+        $targetDir = dirname(__FILE__);
+        if (!is_writable($targetDir)) {
+            @unlink($tmpZip);
+            $this->rrmdir($tmpDir);
+            $this->widget('Widget_Notice')->set(_t('插件目录不可写，无法更新模板，请检查文件权限：') . $targetDir, null, 'notice');
+            $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+            return;
         }
 
-        // 复制新模板到目标
-        $ok = $this->rcopy($srcTemplates, $dstTemplates);
+        // 按 manifest.json 的 version 做选择性覆盖（不备份）
+        @mkdir($dstTemplates, 0755, true);
+        $updated = array();
+        $skipped = array();
+        $failed = array();
+
+        $entries = @scandir($srcTemplates);
+        if ($entries && is_array($entries)) {
+            foreach ($entries as $entry) {
+                if ($entry === '.' || $entry === '..') continue;
+                $srcTpl = $srcTemplates . DIRECTORY_SEPARATOR . $entry;
+                if (!is_dir($srcTpl)) continue;
+                $dstTpl = $dstTemplates . DIRECTORY_SEPARATOR . $entry;
+
+                // 读取 manifest.json
+                $srcManifestFile = $srcTpl . DIRECTORY_SEPARATOR . 'manifest.json';
+                $dstManifestFile = $dstTpl . DIRECTORY_SEPARATOR . 'manifest.json';
+                $srcVersion = null;
+                $dstVersion = null;
+                if (is_file($srcManifestFile)) {
+                    $json = @file_get_contents($srcManifestFile);
+                    $m = @json_decode($json, true);
+                    if (is_array($m) && isset($m['version'])) {
+                        $srcVersion = (string)$m['version'];
+                    }
+                }
+                if (is_file($dstManifestFile)) {
+                    $json = @file_get_contents($dstManifestFile);
+                    $m = @json_decode($json, true);
+                    if (is_array($m) && isset($m['version'])) {
+                        $dstVersion = (string)$m['version'];
+                    }
+                }
+
+                $shouldCopy = false;
+                if (!is_dir($dstTpl)) {
+                    // 目标不存在，直接复制
+                    $shouldCopy = true;
+                } else if ($srcVersion === null) {
+                    // 源没有 version，仍覆盖以保证同步
+                    $shouldCopy = true;
+                } else if ($dstVersion === null) {
+                    // 目标没有 version，覆盖
+                    $shouldCopy = true;
+                } else {
+                    // 版本比较，只有当 github 的版本更大才覆盖
+                    if (version_compare($srcVersion, $dstVersion, '>')) {
+                        $shouldCopy = true;
+                    }
+                }
+
+                if ($shouldCopy) {
+                    // 删除目标（如果存在），然后复制
+                    if (is_dir($dstTpl)) {
+                        $this->rrmdir($dstTpl);
+                    }
+                    $ok = $this->rcopy($srcTpl, $dstTpl);
+                    if ($ok) {
+                        $updated[] = $entry . ($srcVersion !== null ? ' (v' . $srcVersion . ')' : '');
+                    } else {
+                        $failed[] = $entry;
+                    }
+                } else {
+                    $skipped[] = $entry . ($dstVersion !== null ? ' (v' . $dstVersion . ')' : '');
+                }
+            }
+        }
 
         // 清理临时文件
         @unlink($tmpZip);
         $this->rrmdir($tmpDir);
 
-        if ($ok) {
-            $this->widget('Widget_Notice')->set(_t('模板已成功更新并覆盖到 plugins/Links/templates（旧模板已备份）。'), null, 'success');
-        } else {
-            $this->widget('Widget_Notice')->set(_t('模板更新失败，请检查文件权限。'), null, 'notice');
+        // 汇总结果并提示
+        $msgParts = array();
+        if (!empty($updated)) {
+            $msgParts[] = '已更新：' . implode(', ', $updated);
         }
+        if (!empty($skipped)) {
+            $msgParts[] = '跳过（版本相同或更新）：' . implode(', ', $skipped);
+        }
+        if (!empty($failed)) {
+            $msgParts[] = '失败：' . implode(', ', $failed);
+        }
+        $notice = $msgParts ? implode('；', $msgParts) : '未检测到可更新的模板';
 
+        $this->widget('Widget_Notice')->set(_t('模板更新完成：') . $notice, null, empty($failed) ? 'success' : 'notice');
         $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
     }
 

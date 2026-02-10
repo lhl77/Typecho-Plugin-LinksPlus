@@ -5,7 +5,7 @@
  * 
  * @package Links Plus
  * @author LHL
- * @version 1.3.1
+ * @version 1.3.2
  * @dependence 14.10.10-*
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
  * 
@@ -451,7 +451,7 @@ textarea:focus, input[type="text"]:focus, select:focus {
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.3.1";
+    var CURRENT = "v1.3.2";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
@@ -752,29 +752,104 @@ LINKS_PLUS_UPDATE_JS
         <p>固定占位符：<span class="md3-chip" style="font-weight:bold;">' . self::REWRITE_PLACEHOLDER . '</span></p>
     <span class="md3-chip">建议</span>
         <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span><br><br>
-    <a id="links-plus-get-templates" href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text">获取最新主题</a>
-    <a href="https://blog.lhl.one/artical/902.html#主题" target="_blank" class="md3-btn-text">查看全部主题/开发文档</a>
+    <a id="links-plus-get-templates" href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text">同步Github主题</a>
+    <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98" target="_blank" class="md3-btn-text">查看全部主题</a>
+    <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3" target="_blank" class="md3-btn-text">主题开发文档</a>
     
     <div class="lp-update-out" style="margin-top:12px"></div>
         </div>'
         );
         $form->addItem($temHelp);
 
-        // 前端脚本：获取最新主题按钮行为 — 调用后由服务器端执行下载并覆盖 templates（会备份原有 templates）
+        // 前端脚本：获取最新主题按钮行为 — 使用 MD3 风格的模态确认框，确认后由服务器端执行下载并覆盖 templates
                 $script = <<<'SCRIPT'
         <script>
         document.addEventListener('DOMContentLoaded', function(){
             var btn = document.getElementById('links-plus-get-templates');
             if(!btn) return;
+
+            function createDialog(title, body, okText, cancelText) {
+                // 遮罩
+                var overlay = document.createElement('div');
+                overlay.className = 'lp-md3-overlay';
+                overlay.style.position = 'fixed';
+                overlay.style.top = '0';
+                overlay.style.left = '0';
+                overlay.style.right = '0';
+                overlay.style.bottom = '0';
+                overlay.style.background = 'rgba(0,0,0,0.36)';
+                overlay.style.zIndex = '9999';
+                overlay.style.display = 'flex';
+                overlay.style.alignItems = 'center';
+                overlay.style.justifyContent = 'center';
+
+                var card = document.createElement('div');
+                card.className = 'md3-card';
+                card.setAttribute('role','dialog');
+                card.style.maxWidth = '560px';
+                card.style.margin = '16px';
+
+                var h = document.createElement('div');
+                h.className = 'md3-title';
+                h.textContent = title;
+                card.appendChild(h);
+
+                var b = document.createElement('div');
+                b.className = 'md3-body';
+                b.style.marginTop = '8px';
+                b.innerHTML = body;
+                card.appendChild(b);
+
+                var actions = document.createElement('div');
+                actions.className = 'md3-header-actions';
+                actions.style.marginTop = '18px';
+
+                var cancelBtn = document.createElement('a');
+                cancelBtn.href = '#';
+                cancelBtn.className = 'md3-btn-text';
+                cancelBtn.textContent = cancelText || '取消';
+                cancelBtn.style.marginRight = '8px';
+
+                var okBtn = document.createElement('a');
+                okBtn.href = '#';
+                okBtn.className = 'md3-btn-text';
+                okBtn.textContent = okText || '确定';
+                okBtn.style.backgroundColor = 'var(--md-primary)';
+                okBtn.style.color = 'var(--md-on-primary)';
+                okBtn.style.padding = '8px 14px';
+                okBtn.style.borderRadius = '12px';
+
+                actions.appendChild(cancelBtn);
+                actions.appendChild(okBtn);
+                card.appendChild(actions);
+
+                overlay.appendChild(card);
+
+                // 事件
+                cancelBtn.addEventListener('click', function(evt){ evt.preventDefault(); document.body.removeChild(overlay); });
+                okBtn.addEventListener('click', function(evt){ evt.preventDefault(); document.body.removeChild(overlay); if (typeof overlay._onconfirm === 'function') overlay._onconfirm(); });
+
+                return overlay;
+            }
+
             btn.addEventListener('click', function(e){
                 e.preventDefault();
-                if(!confirm('将从 GitHub 下载并覆盖本插件的 templates 目录（会先备份原有 templates），确定继续？')) return;
-                var host = btn.closest ? btn.closest('.md3-card') : null;
-                var out = host ? host.querySelector('.lp-update-out') : null;
-                if(out){ out.innerHTML = '<div class="lp-update-note is-working"><div class="lp-update-title">更新中</div><div class="lp-update-body">正在从 GitHub 下载并更新模板，页面将跳转，请稍候…</div></div>'; }
-                try{ btn.setAttribute('aria-disabled','true'); btn.classList.add('is-disabled'); }catch(e){}
-                // 导航到 action 链接，服务器端处理下载/解压/覆盖逻辑
-                window.location.href = btn.getAttribute('href');
+                // 构造 MD3 风格对话
+                var dialog = createDialog('同步模板', '<p>将从 GitHub 下载，此操作将用 GitHub 上的模板覆盖本地模板（仅当远端版本较新时会覆盖）。是否继续？</p>', '开始同步', '取消');
+
+                dialog._onconfirm = function(){
+                    var host = btn.closest ? btn.closest('.md3-card') : null;
+                    var out = host ? host.querySelector('.lp-update-out') : null;
+                    if(out){ out.innerHTML = '<div class="lp-update-note is-working"><div class="lp-update-title">更新中</div><div class="lp-update-body">正在从 GitHub 下载并更新模板，页面将跳转，请稍候…</div></div>'; }
+                    try{ btn.setAttribute('aria-disabled','true'); btn.classList.add('is-disabled'); }catch(e){}
+                    // 导航到 action 链接，服务器端处理下载/解压/覆盖逻辑
+                    window.location.href = btn.getAttribute('href');
+                };
+
+                document.body.appendChild(dialog);
+                // 聚焦到确认按钮以便无障碍
+                var focusable = dialog.querySelectorAll('.md3-header-actions a');
+                if (focusable && focusable[1]) focusable[1].focus();
             }, false);
         });
         </script>
@@ -813,6 +888,57 @@ LINKS_PLUS_UPDATE_JS
             _t('把占位符替换成哪种模式输出,也可以直接选择某个文件模板。')
         );
         $form->addInput($rewritePattern);
+
+        // 预览：显示所选重写模板的缩略图（templates/<name>/image.png）如果存在
+        $optionsObj = Typecho_Widget::widget('Widget_Options');
+        $nopic_url = Typecho_Common::url('usr/plugins/Links/nopic.png', $optionsObj->siteUrl);
+        $tplBaseUrl = Typecho_Common::url('usr/plugins/Links/templates/', $optionsObj->siteUrl);
+
+        $tplPreview = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $tplPreview->html(
+            '<div class="md3-title">重写主题预览</div>' .
+            '<div class="md3-body">' .
+            '<div style="display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:8px;">' .
+            '<img id="rewrite-tpl-preview-img" src="' . $nopic_url . '" alt="模板预览" style="width:100%;max-width:480px;height:auto;object-fit:contain;border-radius:8px;" />' .
+            '</div>' .
+            '<div id="rewrite-tpl-preview-title" style="font-size:13px;color:#555;margin-top:4px;text-align:center"></div>' .
+            '</div>'
+        );
+        $form->addItem($tplPreview);
+
+        // 前端脚本：根据选择更新预览图
+        $previewScript = <<<'SCRIPT'
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    var sel = document.querySelector('select[name="rewrite_pattern"]');
+    var img = document.getElementById('rewrite-tpl-preview-img');
+    var title = document.getElementById('rewrite-tpl-preview-title');
+    if(!sel || !img || !title) return;
+    var base = '%s';
+    var nopic = '%s';
+
+    function update(){
+        var v = sel.value || '';
+        if(v.indexOf('TPL:') === 0){
+            var name = v.substring(4);
+            var imgUrl = base + name + '/image.png';
+            img.src = imgUrl;
+            title.textContent = name;
+        } else {
+            img.src = nopic;
+            title.textContent = '';
+        }
+    }
+
+    sel.addEventListener('change', update);
+    // 初始化
+    update();
+});
+</script>
+SCRIPT;
+        // 填充 base 与 nopic
+        $previewScript = sprintf($previewScript, $tplBaseUrl, $nopic_url);
+        echo $previewScript;
         
         $rewriteNum = new Typecho_Widget_Helper_Form_Element_Text(
             'rewrite_num',
@@ -954,7 +1080,11 @@ LINKS_PLUS_UPDATE_JS
         $type = explode('_', $installDb->getAdapterName());
         $type = array_pop($type);
         $prefix = $installDb->getPrefix();
-        $scripts = file_get_contents('usr/plugins/Links/' . $type . '.sql');
+        $sqlFile = self::getPluginDir() . DIRECTORY_SEPARATOR . $type . '.sql';
+        if (!is_file($sqlFile)) {
+            throw new Typecho_Plugin_Exception(_t('SQL 安装文件缺失：') . $sqlFile);
+        }
+        $scripts = file_get_contents($sqlFile);
         $scripts = str_replace('typecho_', $prefix, $scripts);
         $scripts = str_replace('%charset%', 'utf8', $scripts);
         $scripts = explode(';', $scripts);
@@ -992,7 +1122,11 @@ LINKS_PLUS_UPDATE_JS
 
     public static function linksUpdate($installDb, $type, $prefix)
     {
-        $scripts = file_get_contents('usr/plugins/Links/Update_' . $type . '.sql');
+        $updateFile = self::getPluginDir() . DIRECTORY_SEPARATOR . 'Update_' . $type . '.sql';
+        if (!is_file($updateFile)) {
+            throw new Typecho_Plugin_Exception(_t('SQL 更新文件缺失：') . $updateFile);
+        }
+        $scripts = file_get_contents($updateFile);
         $scripts = str_replace('typecho_', $prefix, $scripts);
         $scripts = str_replace('%charset%', 'utf8', $scripts);
         $scripts = explode(';', $scripts);
