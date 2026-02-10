@@ -9,6 +9,11 @@
  * @dependence 14.10.10-*
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
  * 
+ * version 1.3.2 at 2025-02-10 by LHL
+ * 修复 admin 运行目录非根目录时相对路径出错的问题
+ * 添加 主题预览
+ * 添加 一键同步同步Github主题
+ * 
  * version 1.3.1 at 2025-02-09 by LHL
  * 优化 一些细节
  * 
@@ -922,11 +927,19 @@ document.addEventListener('DOMContentLoaded', function(){
         if(v.indexOf('TPL:') === 0){
             var name = v.substring(4);
             var imgUrl = base + name + '/image.png';
-            img.src = imgUrl;
-            title.textContent = name;
+            var tester = new Image();
+            tester.onload = function(){
+                img.src = imgUrl;
+                title.textContent = '';
+            };
+            tester.onerror = function(){
+                img.src = nopic;
+                title.textContent = '暂无预览';
+            };
+            tester.src = imgUrl;
         } else {
             img.src = nopic;
-            title.textContent = '';
+            title.textContent = '暂无预览';
         }
     }
 
