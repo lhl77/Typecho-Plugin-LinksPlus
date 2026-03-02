@@ -40,7 +40,10 @@ include 'menu.php';
             .md3-wrap {
                 max-width: 1280px;
                 margin: 0 auto;
+                width: 100%;
+                min-width: 0;
             }
+
 
             /* 顶部 App Bar */
             .md3-appbar {
@@ -104,6 +107,14 @@ include 'menu.php';
             .md3-btn.primary:hover {
                 background: #055a96;
             }
+            .md3-btn.danger {
+                background: #b3261e;
+                color: #fff;
+                border-color: transparent;
+            }
+            .md3-btn.danger:hover {
+                background: #9a201a;
+            }
             .md3-btn.tonal {
                 background: var(--md-primary-container);
                 border-color: transparent;
@@ -118,6 +129,9 @@ include 'menu.php';
                 display: flex;
                 flex-wrap: wrap;
                 gap: 24px;
+                min-width: 0; /* 允许子项在 flex 容器内收缩，避免把页面撑出 */
+                width: 100%;  /* 强制覆盖 .row 的 100vw */
+                margin: 0;    /* 强制重置 .row 的 margin */
             }
             .col-mb-12 {
                 float: none;
@@ -138,6 +152,27 @@ include 'menu.php';
             .manage-list-panel {
                 flex: 2;
                 min-width: 0; /* 防止 flex 子项溢出 */
+            }
+
+            /* 表格外层：需要时允许横向滚动，而不是撑破页面 */
+            .typecho-table-wrap {
+                width: 100%;
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            /* 表格本身：占满容器，并允许内容在单元格内换行 */
+            .typecho-list-table {
+                width: 100%;
+                max-width: 100%;
+                table-layout: fixed;
+            }
+
+            /* URL 容易是超长不带空格的字符串：强制断行避免撑宽 */
+            .typecho-list-table td:nth-child(3) {
+                overflow-wrap: anywhere;
+                word-break: break-word;
             }
             .manage-list-header {
                 padding: 16px 24px;
@@ -200,6 +235,58 @@ include 'menu.php';
             .typecho-list-table tr:hover td {
                 background-color: var(--md-surface-1);
             }
+
+            /* 一键检查：异常行高亮 */
+            .typecho-list-table tr.link-check-fail td {
+                background: #fde7e7 !important;
+            }
+            .typecho-list-table tr.link-check-fail:hover td {
+                background: #fbd0d0 !important;
+            }
+            .typecho-list-table tr.link-check-ok td {
+                background: #e9f7ef !important;
+            }
+            .typecho-list-table tr.link-check-redirect td {
+                background: #fff4cc !important;
+            }
+            .typecho-list-table tr.link-check-redirect:hover td {
+                background: #ffe9a3 !important;
+            }
+            /* 一键检查：不确定/被浏览器拦截（例如 CORS/混合内容/隐私扩展导致 fetch 失败或 opaque） */
+            .typecho-list-table tr.link-check-uncertain td {
+                background: #f3f4f6 !important;
+            }
+            .typecho-list-table tr.link-check-uncertain:hover td {
+                background: #e5e7eb !important;
+            }
+            .link-check-hint {
+                display: inline-block;
+                margin-left: 8px;
+                padding: 2px 8px;
+                border-radius: 999px;
+                font-size: 12px;
+                border: 1px solid rgba(0,0,0,.12);
+                background: #fff;
+                color: #6b7280;
+                vertical-align: middle;
+                white-space: nowrap;
+            }
+            .link-check-hint.ok {
+                border-color: rgba(30,142,62,.25);
+                color: #1e8e3e;
+            }
+            .link-check-hint.redirect {
+                border-color: rgba(185,140,0,.25);
+                color: #8a6b00;
+            }
+            .link-check-hint.uncertain {
+                border-color: rgba(107,114,128,.35);
+                color: #6b7280;
+            }
+            .link-check-hint.fail {
+                border-color: rgba(217,48,37,.25);
+                color: #d93025;
+            }
             
             /* 图片与状态标签 */
             .avatar {
@@ -235,7 +322,7 @@ include 'menu.php';
             /* 右侧编辑面板 */
             .editor-panel {
                 flex: 1;
-                min-width: 320px;
+                min-width: 0; /* 小窗口时允许收缩，避免总宽度超出 */
             }
             .editor-container {
                 padding: 24px;
@@ -315,6 +402,7 @@ include 'menu.php';
                     <a class="md3-btn tonal" href="<?php $options->adminUrl('options-plugin.php?config=Links'); ?>"><?php _e('设置'); ?></a>
                     
                     <a class="md3-btn" href="https://blog.lhl.one/artical/902.html " target="_blank"><?php _e('帮助'); ?></a>
+                    <a class="md3-btn danger" href="javascript:void(0)" id="linksPlusCheckAll" title="通过后端代理检测每个友链是否可访问（可获取真实状态码，避免浏览器跨域/CORS 限制）"><?php _e('一键检查'); ?></a>
                     <a class="md3-btn primary" href="<?php $security->index('/action/links-edit?do=rewrite'); ?>" title="将指定 cid 文章正文中的 {{links_plus}} 占位符替换为友链 HTML" onclick="return confirm('确认要执行正文重写吗？该操作会直接修改文章/页面正文内容。');"><?php _e('执行重写'); ?></a>
                 </div>
             </div>
@@ -366,7 +454,7 @@ include 'menu.php';
                             <tbody>
                                 <?php if (!empty($links)): $alt = 0;?>
                                 <?php foreach ($links as $link): ?>
-                                <tr id="lid-<?php echo $link['lid']; ?>">
+                                <tr id="lid-<?php echo $link['lid']; ?>" data-url="<?php echo htmlspecialchars($link['url'], ENT_QUOTES, 'UTF-8'); ?>">
                                     <td><input type="checkbox" value="<?php echo $link['lid']; ?>" name="lid[]"/></td>
                                     <td><a class="edit-link" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>" title="<?php _e('点击编辑'); ?>"><?php echo $link['name']; ?></a>
                                     <td><a href="<?php echo $link['url']; ?>" target="_blank" style="color:#888; text-decoration:none;"><i class="i-exlink"></i></a> <?php echo $link['url']; ?></td>
@@ -474,6 +562,217 @@ $('input[name="email"]').blur(function() {
         <?php if (isset($request->lid)): ?>
         $('.typecho-mini-panel').effect('highlight', '#AACB36');
         <?php endif; ?>
+
+        // 一键检查：后端代理检测可用性（避免前端 CORS 影响，能拿到真实状态码）
+        (function initLinksPlusCheckAll() {
+            var $btn = $('#linksPlusCheckAll');
+            if (!$btn.length) return;
+
+            var checkApi = '<?php $security->index('/action/links-edit?do=check-link'); ?>';
+
+            function setHint($tr, text, cls) {
+                $tr.find('.link-check-hint').remove();
+                if (!text) return;
+                var $hint = $('<span class="link-check-hint" />').text(text);
+                if (cls) $hint.addClass(cls);
+                $tr.find('td').eq(1).append($hint);
+            }
+
+            function markState($tr, state, msg) {
+                $tr.removeClass('link-check-ok link-check-fail link-check-redirect link-check-uncertain');
+                if (state === 'ok') {
+                    $tr.addClass('link-check-ok');
+                    setHint($tr, msg || '200 可访问', 'ok');
+                } else if (state === 'redirect') {
+                    $tr.addClass('link-check-redirect');
+                    setHint($tr, msg || '301/302 重定向', 'redirect');
+                } else if (state === 'uncertain') {
+                    $tr.addClass('link-check-uncertain');
+                    setHint($tr, msg || '浏览器限制：无法获取状态码', 'uncertain');
+                } else if (state === 'fail') {
+                    $tr.addClass('link-check-fail');
+                    setHint($tr, msg || '请求失败', 'fail');
+                } else {
+                    setHint($tr, msg || '检查中…');
+                }
+            }
+
+            // 调后端接口拿真实状态码：{ ok, status, finalUrl, error }
+            async function probeUrl(url, timeoutMs) {
+                // jQuery ajax 返回 jqXHR（支持 abort）
+                return await new Promise(function (resolve) {
+                    var timer = setTimeout(function () {
+                        resolve({ ok: false, status: 0, error: '超时' });
+                        try { xhr && xhr.abort && xhr.abort(); } catch (e) {}
+                    }, timeoutMs);
+
+                    var xhr = $.ajax({
+                        url: checkApi,
+                        method: 'POST',
+                        dataType: 'json',
+                        data: { url: url },
+                        success: function (data) {
+                            clearTimeout(timer);
+                            resolve(data || { ok: false, status: 0, error: '返回为空' });
+                        },
+                        error: function () {
+                            clearTimeout(timer);
+                            resolve({ ok: false, status: 0, error: '后端接口不可用' });
+                        }
+                    });
+                });
+            }
+
+            // 简单并发控制
+            async function runPool(items, worker, concurrency) {
+                var index = 0;
+                var running = 0;
+                return new Promise(function (resolve) {
+                    function next() {
+                        if (index >= items.length && running === 0) return resolve();
+                        while (running < concurrency && index < items.length) {
+                            (function (item) {
+                                running++;
+                                Promise.resolve(worker(item)).finally(function () {
+                                    running--;
+                                    next();
+                                });
+                            })(items[index++]);
+                        }
+                    }
+                    next();
+                });
+            }
+
+            // 前端二次兜底：no-referrer 可达性探测（弱判断）
+            // - 不发送 Referer（referrerpolicy=no-referrer）
+            // - 不受 fetch CORS 影响，但同样拿不到状态码
+            // - 仅用于当后端报错时，帮助区分“浏览器侧仍可加载一点内容”
+            function probeUrlNoReferrer(url, timeoutMs) {
+                return new Promise(function (resolve) {
+                    var done = false;
+                    var timer = setTimeout(function () {
+                        if (done) return;
+                        done = true;
+                        cleanup();
+                        resolve({ ok: false, reason: 'timeout' });
+                    }, timeoutMs);
+
+                    var iframe = document.createElement('iframe');
+                    iframe.style.width = '1px';
+                    iframe.style.height = '1px';
+                    iframe.style.border = '0';
+                    iframe.style.position = 'absolute';
+                    iframe.style.left = '-9999px';
+                    iframe.style.top = '-9999px';
+                    iframe.referrerPolicy = 'no-referrer';
+
+                    function cleanup() {
+                        clearTimeout(timer);
+                        try { iframe.onload = null; iframe.onerror = null; } catch (e) {}
+                        try { iframe.parentNode && iframe.parentNode.removeChild(iframe); } catch (e) {}
+                    }
+
+                    iframe.onload = function () {
+                        if (done) return;
+                        done = true;
+                        cleanup();
+                        resolve({ ok: true });
+                    };
+                    iframe.onerror = function () {
+                        if (done) return;
+                        done = true;
+                        cleanup();
+                        resolve({ ok: false, reason: 'error' });
+                    };
+
+                    document.body.appendChild(iframe);
+                    setTimeout(function () {
+                        try {
+                            iframe.src = url;
+                        } catch (e) {
+                            if (done) return;
+                            done = true;
+                            cleanup();
+                            resolve({ ok: false, reason: 'exception' });
+                        }
+                    }, 0);
+                });
+            }
+
+            $btn.on('click', async function (e) {
+                if (e && e.preventDefault) e.preventDefault();
+                if (e && e.stopPropagation) e.stopPropagation();
+                if ($btn.data('running')) return;
+                $btn.data('running', true);
+                $btn.addClass('disabled').attr('aria-disabled', 'true');
+
+                var rows = [];
+                $('.typecho-list-table tbody tr[id^="lid-"]').each(function () {
+                    var $tr = $(this);
+                    var url = ($tr.data('url') || '').toString().trim();
+                    if (!url) return;
+                    rows.push({ $tr: $tr, url: url });
+                });
+
+                $('.typecho-list-table tbody tr').removeClass('link-check-ok link-check-fail link-check-redirect').find('.link-check-hint').remove();
+
+                $btn.text('检查中…');
+
+                try {
+                    await runPool(rows, async function (item) {
+                        markState(item.$tr, 'pending', '检查中…');
+                        var res = await probeUrl(item.url, 8000);
+                        if (!res) {
+                            markState(item.$tr, 'fail', '后端接口不可用');
+                            return;
+                        }
+
+                        // 后端返回 status=0：表示没拿到 HTTP 状态码。
+                        // 此时后端已做“TCP 80/443 连通性”兜底，并把结论映射在 error 文案里。
+                        if (res.ok !== true || (typeof res.status === 'number' && res.status <= 0)) {
+                            var msg = (res && res.error) ? String(res.error) : '无法获取状态码';
+
+                            // 前端再次测试兜底：no-referrer（弱判断）
+                            // 注意：此兜底不会解决后端 SSL/状态码问题，只用于补充“浏览器侧加载是否能发起”。
+                            try {
+                                var p = await probeUrlNoReferrer(item.url, 3500);
+                                if (p && p.ok) {
+                                    markState(item.$tr, 'ok', '可访问 (状态码未知)');
+                                    return;
+                                }
+                            } catch (e) {}
+
+                            // 前端兜底 TCP 检测（支持跨域）——实际通过后端完成 TCP 探测，前端只负责展示
+                            // - 主机不可达/端口不可达：明确失败
+                            // - 主机可达但 HTTP 失败：灰色 uncertain
+                            if (msg.indexOf('主机不可达') !== -1 || msg.indexOf('端口不可达') !== -1 || msg.indexOf('无法解析域名') !== -1) {
+                                markState(item.$tr, 'fail', msg);
+                            } else {
+                                markState(item.$tr, 'uncertain', msg);
+                            }
+                            return;
+                        }
+
+                        if (res.status === 200 || res.status === 206) {
+                            markState(item.$tr, 'ok', res.status + ' 可访问');
+                        } else if (res.status === 301 || res.status === 302) {
+                            var hint = res.status + ' 重定向';
+                            if (res.finalUrl) hint += ' → ' + res.finalUrl;
+                            markState(item.$tr, 'redirect', hint);
+                        } else if (res.status === 404) {
+                            markState(item.$tr, 'fail', '404 请求失败');
+                        } else {
+                            markState(item.$tr, 'fail', res.status + ' 请求失败');
+                        }
+                    }, 6);
+                } finally {
+                    $btn.text('一键检查');
+                    $btn.data('running', false);
+                    $btn.removeClass('disabled').removeAttr('aria-disabled');
+                }
+            });
+        })();
     });
 })();
 </script>

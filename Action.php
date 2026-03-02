@@ -194,6 +194,424 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
     }
 
     /**
+     * 后端检测友链可用性（避免前端 CORS 影响）：
+     * - 仅管理员可调用（action() 已授权）
+     * - 返回 JSON：{ ok: bool, status: int, finalUrl?: string, error?: string }
+     */
+    public function checkLink()
+    {
+        $url = trim((string)$this->request->get('url'));
+        if ($url === '') {
+            $this->response->throwJson(array(
+                'ok' => false,
+                'status' => 0,
+                'finalUrl' => null,
+                'error' => '缺少 url'
+            ));
+            return;
+        }
+
+        // 仅允许 http/https
+        if (!preg_match('#^https?://#i', $url)) {
+            $this->response->throwJson(array(
+                'ok' => false,
+                'status' => 0,
+                'finalUrl' => null,
+                'error' => '仅支持 http/https'
+            ));
+            return;
+        }
+
+        // 防御：禁止访问内网/本地地址（简单版）
+        $parts = @parse_url($url);
+        $host = isset($parts['host']) ? $parts['host'] : '';
+        if ($host === '') {
+            $this->response->throwJson(array(
+                'ok' => false,
+                'status' => 0,
+                'finalUrl' => null,
+                'error' => 'URL 不合法'
+            ));
+            return;
+        }
+        $ip = @gethostbyname($host);
+        // DNS 解析失败时，gethostbyname 会原样返回 host
+        if ($ip === $host) {
+            $this->response->throwJson(array(
+                'ok' => false,
+                'status' => 0,
+                'finalUrl' => null,
+                'error' => '无法解析域名'
+            ));
+            return;
+        }
+        if ($ip && filter_var($ip, FILTER_VALIDATE_IP)) {
+            // 10.0.0.0/8, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+            $isPrivate = false;
+            if (preg_match('#^(10\.|127\.|192\.168\.)#', $ip)) $isPrivate = true;
+            if (preg_match('#^172\.(1[6-9]|2\d|3[0-1])\.#', $ip)) $isPrivate = true;
+            if ($isPrivate) {
+                $this->response->throwJson(array(
+                    'ok' => false,
+                    'status' => 0,
+                    'finalUrl' => null,
+                    'error' => '禁止访问内网地址'
+                ));
+                return;
+            }
+        }
+
+        $timeout = 6;
+        $status = 0;
+        $finalUrl = null;
+        $error = null;
+
+        /**
+         * 兜底：网络可达性探测（“ping 域名”的等价实现）
+         * - 真实 ICMP ping 往往需要系统权限/被禁；因此优先用 TCP connect(80/443) 判断主机是否可达
+         * - 仅在 HTTP 探测全部失败时触发，用于把“站点拦截/SSL/应用层错误”和“主机根本不可达”区分开
+         */
+        $netProbe = function ($host, $scheme, $timeoutSec) {
+            $timeoutSec = max(1, (int)$timeoutSec);
+            $ports = array();
+            if (strtolower((string)$scheme) === 'https') {
+                $ports = array(443, 80);
+            } else {
+                $ports = array(80, 443);
+            }
+
+            $lastErr = null;
+            foreach ($ports as $port) {
+                $errno = 0;
+                $errstr = '';
+                // IP 已在前面 gethostbyname 解析过，这里直接连 IP，避免再次被 DNS 影响
+                $fp = @fsockopen($host, $port, $errno, $errstr, $timeoutSec);
+                if ($fp) {
+                    @fclose($fp);
+                    return array('ok' => true, 'via' => 'tcp', 'port' => $port);
+                }
+                $lastErr = $errstr ?: ($errno ? ('errno ' . $errno) : null);
+            }
+
+            // 可选：尝试系统 ping（不保证可用）
+            $pingCmd = null;
+            if (function_exists('shell_exec')) {
+                $hasPing = @shell_exec('command -v ping 2>/dev/null');
+                if (is_string($hasPing) && trim($hasPing) !== '') {
+                    $pingCmd = 'ping -c 1 -W ' . (int)$timeoutSec . ' ' . escapeshellarg($host) . ' 2>&1';
+                    $out = @shell_exec($pingCmd);
+                    if (is_string($out) && preg_match('/\b1\s+received\b|\b1\s+packets\s+received\b/i', $out)) {
+                        return array('ok' => true, 'via' => 'icmp');
+                    }
+                    if (is_string($out) && trim($out) !== '') {
+                        $lastErr = trim($out);
+                    }
+                }
+            }
+
+            return array('ok' => false, 'via' => 'tcp', 'error' => $lastErr ?: '主机不可达');
+        };
+
+    // 只按用户填写的 URL 协议探测，不做 http/https 降级（避免 http 301 兜底误导）
+    $candidateUrls = array($url);
+
+        // 优先使用 cURL
+        if (function_exists('curl_init')) {
+            $tryError = null;
+
+            // 更像浏览器的基础请求头（减少部分 WAF/防火墙对“探测请求”的拦截概率）
+            $browserHeaders = array(
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+                'Cache-Control: no-cache',
+                'Pragma: no-cache',
+                'Connection: close'
+            );
+
+            // 针对同一个地址做多次尝试：
+            // - 第 1 次：默认协商 TLS
+            // - 第 2/3/4 次：如果环境支持，按 TLSv1.2 -> TLSv1.1 -> TLSv1 依次尝试（兼容少数老站点）
+            $sslVersionsToTry = array(null);
+            if (defined('CURL_SSLVERSION_TLSv1_2')) {
+                $sslVersionsToTry[] = CURL_SSLVERSION_TLSv1_2;
+            }
+            if (defined('CURL_SSLVERSION_TLSv1_1')) {
+                $sslVersionsToTry[] = CURL_SSLVERSION_TLSv1_1;
+            }
+            if (defined('CURL_SSLVERSION_TLSv1')) {
+                $sslVersionsToTry[] = CURL_SSLVERSION_TLSv1;
+            }
+
+            foreach ($candidateUrls as $candidateUrl) {
+                foreach ($sslVersionsToTry as $sslVersion) {
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $candidateUrl);
+                    // 兼容性：部分站点不支持 HEAD；这里用 GET + Range 只取很小数据
+                    curl_setopt($ch, CURLOPT_NOBODY, false);
+                    curl_setopt($ch, CURLOPT_HTTPGET, true);
+                    curl_setopt($ch, CURLOPT_RANGE, '0-0');
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_HEADER, true);
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false); // 需要区分 301/302
+                    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_USERAGENT, 'LinksPlus/1.3.3 LinkChecker');
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, $browserHeaders);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+                    // 明确按 URL scheme 走 HTTP/HTTPS（避免错误协议探测）
+                    if (stripos($candidateUrl, 'https://') === 0 && defined('CURLPROTO_HTTPS')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+                        if (defined('CURLPROTO_HTTP')) {
+                            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+                        }
+                    } elseif (stripos($candidateUrl, 'http://') === 0 && defined('CURLPROTO_HTTP')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
+                        if (defined('CURLPROTO_HTTP')) {
+                            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | (defined('CURLPROTO_HTTPS') ? CURLPROTO_HTTPS : 0));
+                        }
+                    }
+
+                    // 有些环境下启用 HTTP/2 会导致个别站点握手失败，强制 HTTP/1.1 更稳
+                    if (defined('CURL_HTTP_VERSION_1_1')) {
+                        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+                    }
+
+                    // 明确接受压缩，避免某些站点对空 Accept-Encoding 行为异常
+                    curl_setopt($ch, CURLOPT_ENCODING, '');
+
+                    if ($sslVersion !== null) {
+                        curl_setopt($ch, CURLOPT_SSLVERSION, $sslVersion);
+                    }
+
+                    $resp = curl_exec($ch);
+                    if ($resp === false) {
+                        $tryError = curl_error($ch);
+                        curl_close($ch);
+                        continue;
+                    }
+
+                    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                    // 尝试读取 Location
+                    if ($status === 301 || $status === 302) {
+                        if (preg_match('/\nLocation:\s*([^\r\n]+)/i', "\n" . $resp, $m)) {
+                            $finalUrl = trim($m[1]);
+                        }
+                    }
+
+                    curl_close($ch);
+                    // 成功拿到状态码就停止尝试
+                    if ($status > 0) {
+                        $error = null;
+                        break 2;
+                    }
+                }
+            }
+
+            // 兜底A：如果主探测失败，尝试一次“普通 GET（不带 Range）”。
+            // 说明：部分站点/WAF 会对 Range/探测型请求直接断连（Empty reply），但对普通 GET 会返回 200/3xx/4xx。
+            if ($status <= 0) {
+                foreach ($candidateUrls as $candidateUrl) {
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $candidateUrl);
+                    curl_setopt($ch, CURLOPT_NOBODY, false);
+                    curl_setopt($ch, CURLOPT_HTTPGET, true);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_HEADER, true);
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false); // 保持与你的规则一致：不自动跟随，便于区分 301/302
+                    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36');
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, $browserHeaders);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                    if (defined('CURL_HTTP_VERSION_1_1')) {
+                        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+                    }
+
+                    // 明确按 URL scheme 走 HTTP/HTTPS
+                    if (stripos($candidateUrl, 'https://') === 0 && defined('CURLPROTO_HTTPS')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+                        if (defined('CURLPROTO_HTTP')) {
+                            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+                        }
+                    } elseif (stripos($candidateUrl, 'http://') === 0 && defined('CURLPROTO_HTTP')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
+                        curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | (defined('CURLPROTO_HTTPS') ? CURLPROTO_HTTPS : 0));
+                    }
+
+                    $resp = curl_exec($ch);
+                    if ($resp === false) {
+                        $tryError = curl_error($ch);
+                        curl_close($ch);
+                        continue;
+                    }
+
+                    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                    if ($status === 301 || $status === 302) {
+                        if (preg_match('/\nLocation:\s*([^\r\n]+)/i', "\n" . $resp, $m)) {
+                            $finalUrl = trim($m[1]);
+                        }
+                    }
+                    curl_close($ch);
+
+                    if ($status > 0) {
+                        $error = null;
+                        break;
+                    }
+                }
+            }
+
+            // 兜底：部分站点会对 GET + Range 探测直接断开（Empty reply）或对特定内容协商敏感。
+            // 这里在“主探测失败”时再做一次更传统的 HEAD 探测，并允许跟随一次重定向，尽量拿到一个可用的状态码。
+            if ($status <= 0) {
+                foreach ($candidateUrls as $candidateUrl) {
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, $candidateUrl);
+                    curl_setopt($ch, CURLOPT_NOBODY, true);  // HEAD
+                    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'HEAD');
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch, CURLOPT_HEADER, true);
+                    // 允许跟随一次重定向：很多站点 http->https 或域名跳转，HEAD 更容易拿到 301/302
+                    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                    curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+                    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+                    curl_setopt($ch, CURLOPT_USERAGENT, 'LinksPlus/1.3.3 LinkChecker');
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, $browserHeaders);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                    if (defined('CURL_HTTP_VERSION_1_1')) {
+                        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+                    }
+
+                    // 明确按 URL scheme 走 HTTP/HTTPS
+                    if (stripos($candidateUrl, 'https://') === 0 && defined('CURLPROTO_HTTPS')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+                        if (defined('CURLPROTO_HTTP')) {
+                            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+                        }
+                    } elseif (stripos($candidateUrl, 'http://') === 0 && defined('CURLPROTO_HTTP')) {
+                        curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP);
+                        curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | (defined('CURLPROTO_HTTPS') ? CURLPROTO_HTTPS : 0));
+                    }
+
+                    $resp = curl_exec($ch);
+                    if ($resp === false) {
+                        $tryError = curl_error($ch);
+                        curl_close($ch);
+                        continue;
+                    }
+
+                    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                    $effective = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+                    curl_close($ch);
+
+                    if ($status > 0) {
+                        // 如果发生过跳转，把最终 URL 作为 finalUrl 给前端展示
+                        if (is_string($effective) && $effective !== '' && $effective !== $candidateUrl) {
+                            $finalUrl = $effective;
+                        }
+                        $error = null;
+                        break;
+                    }
+                }
+            }
+
+            if ($status <= 0 && $tryError) {
+                // 统一一下错误文案，避免目前这类错误全都被前端当作“请求失败”难以定位
+                $te = (string)$tryError;
+                // 典型 OpenSSL 版本不匹配报错：
+                // - error:1407742E:SSL routines:SSL23_GET_SERVER_HELLO:tlsv1 alert protocol version
+                // - tlsv1 alert protocol version
+                // - protocol version
+                // - wrong version number
+                // - SSL23_GET_SERVER_HELLO
+                if (stripos($te, 'unsupported protocol') !== false
+                    || stripos($te, 'SSL23_GET_SERVER_HELLO') !== false
+                    || stripos($te, 'tlsv1 alert protocol version') !== false
+                    || stripos($te, 'alert protocol version') !== false
+                    || stripos($te, 'wrong version number') !== false
+                    || stripos($te, 'protocol version') !== false
+                ) {
+                    $error = 'SSL 不兼容/已过期';
+                } elseif (stripos($te, 'handshake') !== false) {
+                    $error = 'SSL 握手失败';
+                } elseif (stripos($te, 'Empty reply from server') !== false) {
+                    // 常见于：服务器主动断开连接/拒绝这类探测请求/需要特定 Host/SNI/策略拦截
+                    $error = '服务器无响应';
+                } elseif (stripos($te, 'Could not resolve host') !== false) {
+                    // 理论上前面 gethostbyname 已拦截，但某些环境下仍可能在 cURL 报错
+                    $error = '无法解析域名';
+                } else {
+                    $error = $te;
+                }
+            }
+
+            // 兜底：如果 HTTP 层面都失败了，再做一次“网络可达性”探测，给出更明确的原因
+            if ($status <= 0) {
+                $scheme = isset($parts['scheme']) ? $parts['scheme'] : '';
+                $net = $netProbe($ip, $scheme, $timeout);
+                if (!$net['ok']) {
+                    $error = '主机不可达/端口不可达';
+                } else {
+                    // 主机可达但 HTTP 失败：多半是 TLS/WAF/应用层拦截
+                    if (!$error) {
+                        $error = '主机可达但 HTTP 探测失败（可能被拦截/SSL/站点策略）';
+                    }
+                }
+            }
+        } else {
+            // fallback：get_headers（不一定准确，但比纯前端强）
+            $ctx = stream_context_create(array('http' => array('method' => 'HEAD', 'timeout' => $timeout)));
+            $headers = @get_headers($url, 1, $ctx);
+            if ($headers === false) {
+                $error = '请求失败';
+            } else {
+                // 可能出现多段，取最后一次的 HTTP 状态行
+                $statusLine = null;
+                if (is_array($headers)) {
+                    foreach ($headers as $k => $v) {
+                        if (is_int($k) && stripos($v, 'HTTP/') === 0) {
+                            $statusLine = $v;
+                        }
+                    }
+                }
+                if ($statusLine && preg_match('#\s(\d{3})\s#', $statusLine, $m)) {
+                    $status = (int)$m[1];
+                }
+
+                if (($status === 301 || $status === 302) && isset($headers['Location'])) {
+                    $loc = $headers['Location'];
+                    $finalUrl = is_array($loc) ? end($loc) : $loc;
+                }
+            }
+
+            // get_headers 也失败时，同样做一次网络可达性兜底
+            if ($status <= 0) {
+                $scheme = isset($parts['scheme']) ? $parts['scheme'] : '';
+                $net = $netProbe($ip, $scheme, $timeout);
+                if (!$net['ok']) {
+                    $error = '主机不可达/端口不可达';
+                } else {
+                    if (!$error) {
+                        $error = '主机可达但 HTTP 探测失败（可能被拦截/SSL/站点策略）';
+                    }
+                }
+            }
+        }
+
+        $ok = ($status > 0);
+        $this->response->throwJson(array(
+            'ok' => $ok,
+            'status' => $status,
+            'finalUrl' => $finalUrl,
+            'error' => $ok ? null : ($error ?: '请求失败')
+        ));
+    }
+
+    /**
      * 按插件设置的 cid 列表，重写文章/页面正文：
      * - 用 {{links_plus}} 占位符替换为插件生成的友链 HTML
      */
@@ -349,6 +767,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->on($this->request->is('do=sort'))->sortLink();
         $this->on($this->request->is('do=email-logo'))->emailLogo();
     $this->on($this->request->is('do=rewrite'))->rewriteContents();
+    $this->on($this->request->is('do=check-link'))->checkLink();
         $this->on($this->request->is('do=update_templates'))->updateTemplates();
         $this->response->redirect($this->options->adminUrl);
     }

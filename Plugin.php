@@ -5,9 +5,13 @@
  * 
  * @package Links Plus
  * @author LHL
- * @version 1.3.2
+ * @version 1.3.3
  * @dependence 14.10.10-*
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
+ * 
+ * version 1.3.3 at 2025-03-02 by LHL
+ * 修复 Typecho 1.3.0 下管理界面显示问题
+ * 添加 一键检查友链网址是否能够正常访问（后端检测，前端兜底）
  * 
  * version 1.3.2 at 2025-02-10 by LHL
  * 修复 admin 运行目录非根目录时相对路径出错的问题
@@ -456,7 +460,7 @@ textarea:focus, input[type="text"]:focus, select:focus {
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.3.2";
+    var CURRENT = "v1.3.3";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
