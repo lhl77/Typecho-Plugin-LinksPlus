@@ -644,60 +644,31 @@ $('input[name="email"]').blur(function() {
                 });
             }
 
-            // 前端二次兜底：no-referrer 可达性探测（弱判断）
-            // - 不发送 Referer（referrerpolicy=no-referrer）
-            // - 不受 fetch CORS 影响，但同样拿不到状态码
-            // - 仅用于当后端报错时，帮助区分“浏览器侧仍可加载一点内容”
-            function probeUrlNoReferrer(url, timeoutMs) {
-                return new Promise(function (resolve) {
-                    var done = false;
-                    var timer = setTimeout(function () {
-                        if (done) return;
-                        done = true;
-                        cleanup();
-                        resolve({ ok: false, reason: 'timeout' });
-                    }, timeoutMs);
+            // 前端二次兜底：no-referrer 的 GET（弱判断，但满足“前端再次 GET + 不带 referer”）
+            // - referrerPolicy: 'no-referrer' 不发送 Referer
+            // - mode: 'no-cors' 避免 CORS 抛错（但响应会是 opaque，拿不到 status）
+            // - 成功：仅表示“请求在浏览器侧可发出且未抛错”，不等于 200
+            async function probeUrlNoReferrer(url, timeoutMs) {
+                var ctrl = (window.AbortController ? new AbortController() : null);
+                var timer = setTimeout(function () {
+                    try { ctrl && ctrl.abort && ctrl.abort(); } catch (e) {}
+                }, timeoutMs);
 
-                    var iframe = document.createElement('iframe');
-                    iframe.style.width = '1px';
-                    iframe.style.height = '1px';
-                    iframe.style.border = '0';
-                    iframe.style.position = 'absolute';
-                    iframe.style.left = '-9999px';
-                    iframe.style.top = '-9999px';
-                    iframe.referrerPolicy = 'no-referrer';
-
-                    function cleanup() {
-                        clearTimeout(timer);
-                        try { iframe.onload = null; iframe.onerror = null; } catch (e) {}
-                        try { iframe.parentNode && iframe.parentNode.removeChild(iframe); } catch (e) {}
-                    }
-
-                    iframe.onload = function () {
-                        if (done) return;
-                        done = true;
-                        cleanup();
-                        resolve({ ok: true });
-                    };
-                    iframe.onerror = function () {
-                        if (done) return;
-                        done = true;
-                        cleanup();
-                        resolve({ ok: false, reason: 'error' });
-                    };
-
-                    document.body.appendChild(iframe);
-                    setTimeout(function () {
-                        try {
-                            iframe.src = url;
-                        } catch (e) {
-                            if (done) return;
-                            done = true;
-                            cleanup();
-                            resolve({ ok: false, reason: 'exception' });
-                        }
-                    }, 0);
-                });
+                try {
+                    await fetch(url, {
+                        method: 'GET',
+                        mode: 'no-cors',
+                        cache: 'no-store',
+                        redirect: 'follow',
+                        referrerPolicy: 'no-referrer',
+                        signal: ctrl ? ctrl.signal : undefined
+                    });
+                    clearTimeout(timer);
+                    return { ok: true };
+                } catch (e) {
+                    clearTimeout(timer);
+                    return { ok: false, reason: 'blocked-or-network' };
+                }
             }
 
             $btn.on('click', async function (e) {
@@ -733,12 +704,12 @@ $('input[name="email"]').blur(function() {
                         if (res.ok !== true || (typeof res.status === 'number' && res.status <= 0)) {
                             var msg = (res && res.error) ? String(res.error) : '无法获取状态码';
 
-                            // 前端再次测试兜底：no-referrer（弱判断）
-                            // 注意：此兜底不会解决后端 SSL/状态码问题，只用于补充“浏览器侧加载是否能发起”。
+                            // 前端再次测试兜底：no-referrer 的 GET
+                            // 按你的规则：前端可达 => 绿色；否则继续走红/灰
                             try {
                                 var p = await probeUrlNoReferrer(item.url, 3500);
                                 if (p && p.ok) {
-                                    markState(item.$tr, 'ok', '可访问 (状态码未知)');
+                                    markState(item.$tr, 'ok', '可访问 (状态未知)');
                                     return;
                                 }
                             } catch (e) {}
