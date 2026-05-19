@@ -1,10 +1,17 @@
 {
   "name": "z-mirages",
-  "title": "(主题专用) Mirages",
-  "version": "1.0.0",
-  "description": "Mirages 主题用：Markdown 友链格式输出，无注入。",
+  "title": "Mirages 复刻",
+  "version": "2.0.0",
+  "description": "Mirages 复刻：纯 HTML 输出，包含响应式样式和暗色模式适配。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-zm-container",
+    "attrs": {
+      "style": "display: flex; flex-wrap: wrap; justify-content: flex-start; margin: -10px;"
+    }
+  },
   "inject": {
-    "css": false,
+    "css": true,
     "js": false
   }
 }

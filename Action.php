@@ -1,10 +1,448 @@
 <?php
 
+require_once dirname(__FILE__) . '/lib/Mailer.php';
+
 class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 {
     private $db;
     private $options;
     private $prefix;
+
+    /**
+     * 将配置值统一转成数组
+     *
+     * @param mixed $value
+     * @return array<int,string>
+     */
+    private function normalizeOptionArray($value)
+    {
+        if (is_array($value)) {
+            $result = array();
+            foreach ($value as $item) {
+                $item = trim((string)$item);
+                if ($item !== '') {
+                    $result[] = $item;
+                }
+            }
+            return array_values(array_unique($result));
+        }
+
+        $value = trim((string)$value);
+        return $value === '' ? array() : array($value);
+    }
+
+    /**
+     * 获取操作目标 lids（兼容批量/单条）
+     *
+     * @return array<int,int>
+     */
+    private function getTargetLids()
+    {
+        $lids = $this->request->filter('int')->getArray('lid');
+        if (!$lids || !is_array($lids)) {
+            $single = (int)$this->request->get('lid');
+            $lids = $single > 0 ? array($single) : array();
+        }
+
+        $normalized = array();
+        foreach ($lids as $lid) {
+            $lid = (int)$lid;
+            if ($lid > 0) {
+                $normalized[] = $lid;
+            }
+        }
+
+        return array_values(array_unique($normalized));
+    }
+
+    /**
+     * 文本清洗：去首尾空白、去控制字符、按长度截断
+     */
+    private function sanitizeText($value, $maxLen)
+    {
+        $value = trim((string)$value);
+        $value = preg_replace('/[\x00-\x1F\x7F]/u', '', $value);
+        if ($maxLen > 0 && function_exists('mb_substr')) {
+            $value = mb_substr($value, 0, (int)$maxLen, 'UTF-8');
+        } elseif ($maxLen > 0) {
+            $value = substr($value, 0, (int)$maxLen);
+        }
+        return trim((string)$value);
+    }
+
+    /**
+     * URL 校验与标准化（仅允许 http/https）
+     */
+    private function sanitizeUrl($value)
+    {
+        $value = trim((string)$value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (!filter_var($value, FILTER_VALIDATE_URL)) {
+            return '';
+        }
+
+        $parts = @parse_url($value);
+        $scheme = isset($parts['scheme']) ? strtolower((string)$parts['scheme']) : '';
+        if (!in_array($scheme, array('http', 'https'), true)) {
+            return '';
+        }
+
+        return $value;
+    }
+
+    /**
+     * 友链申请频控：同 IP 在窗口期内限制提交次数
+     */
+    private function hitApplyRateLimit($ip, $maxCount = 8, $windowSeconds = 600)
+    {
+        $ip = trim((string)$ip);
+        if ($ip === '') {
+            return false;
+        }
+
+        $file = sys_get_temp_dir() . '/links_plus_apply_rate_' . md5($ip) . '.json';
+        $now = time();
+        $records = array();
+
+        $fp = @fopen($file, 'c+');
+        if (!$fp) {
+            // 频控文件不可用时，默认放行，避免误伤正常提交
+            return false;
+        }
+
+        if (!@flock($fp, LOCK_EX)) {
+            @fclose($fp);
+            return false;
+        }
+
+        $raw = stream_get_contents($fp);
+        if ($raw) {
+            $decoded = @json_decode($raw, true);
+            if (is_array($decoded)) {
+                $records = $decoded;
+            }
+        }
+
+        $valid = array();
+        foreach ($records as $ts) {
+            $ts = (int)$ts;
+            if ($ts > 0 && ($now - $ts) <= (int)$windowSeconds) {
+                $valid[] = $ts;
+            }
+        }
+
+        $limited = count($valid) >= (int)$maxCount;
+        if (!$limited) {
+            $valid[] = $now;
+        }
+
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($valid));
+        fflush($fp);
+        @flock($fp, LOCK_UN);
+        @fclose($fp);
+
+        return $limited;
+    }
+
+    /**
+     * 获取当前请求安全回跳地址（仅允许本站域名）
+     */
+    private function getSafeApplyReturnUrl()
+    {
+        $fallback = Typecho_Common::url('/', $this->options->siteUrl);
+        $ref = isset($_SERVER['HTTP_REFERER']) ? trim((string)$_SERVER['HTTP_REFERER']) : '';
+        if ($ref === '') {
+            return $fallback;
+        }
+
+        $refParts = @parse_url($ref);
+        $siteParts = @parse_url((string)$this->options->siteUrl);
+        if (!is_array($refParts) || !is_array($siteParts)) {
+            return $fallback;
+        }
+
+        $scheme = isset($refParts['scheme']) ? strtolower((string)$refParts['scheme']) : '';
+        $refHost = isset($refParts['host']) ? strtolower((string)$refParts['host']) : '';
+        $siteHost = isset($siteParts['host']) ? strtolower((string)$siteParts['host']) : '';
+        if (!in_array($scheme, array('http', 'https'), true) || $refHost === '' || $siteHost === '' || $refHost !== $siteHost) {
+            return $fallback;
+        }
+
+        return $ref;
+    }
+
+    /**
+     * 向 URL 追加参数
+     *
+     * @param string $url
+     * @param array<string,string> $params
+     */
+    private function appendUrlParams($url, array $params)
+    {
+        $parts = @parse_url($url);
+        if (!is_array($parts)) {
+            return $url;
+        }
+
+        $query = array();
+        if (!empty($parts['query'])) {
+            parse_str((string)$parts['query'], $query);
+        }
+        foreach ($params as $k => $v) {
+            $query[$k] = $v;
+        }
+
+        $scheme = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+        $host = isset($parts['host']) ? $parts['host'] : '';
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $user = isset($parts['user']) ? $parts['user'] : '';
+        $pass = isset($parts['pass']) ? ':' . $parts['pass'] : '';
+        $pass = ($user || $pass) ? $pass . '@' : '';
+        $path = isset($parts['path']) ? $parts['path'] : '';
+        $q = http_build_query($query);
+        $frag = isset($parts['fragment']) ? '#' . $parts['fragment'] : '';
+
+        return $scheme . $user . $pass . $host . $port . $path . ($q !== '' ? '?' . $q : '') . $frag;
+    }
+
+    /**
+     * 判断当前请求是否为 AJAX（XMLHttpRequest）
+     */
+    private function isAjaxRequest()
+    {
+        return isset($_SERVER['HTTP_X_REQUESTED_WITH']) &&
+               strtolower(trim((string)$_SERVER['HTTP_X_REQUESTED_WITH'])) === 'xmlhttprequest';
+    }
+
+    /**
+     * 前台申请回跳并带状态码；AJAX 请求时改为返回 JSON
+     */
+    private function redirectApplyStatus($status)
+    {
+        if ($this->isAjaxRequest()) {
+            $messages = array(
+                'ok'           => _t('申请已提交，正在等待管理员审核。'),
+                'duplicate'    => _t('该友链地址已存在，请勿重复提交。'),
+                'rate_limited' => _t('提交过于频繁，请稍后再试。'),
+                'invalid'      => _t('提交失败：参数不合法，请检查后重试。'),
+                'token'        => _t('提交失败：表单校验未通过，请刷新页面后重试。'),
+                'server_error' => _t('提交失败：服务器内部错误，请稍后再试。'),
+            );
+            $msg = isset($messages[$status]) ? $messages[$status] : _t('未知错误');
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array(
+                'status'  => (string)$status,
+                'message' => (string)$msg,
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $url = $this->appendUrlParams($this->getSafeApplyReturnUrl(), array(
+            'links_apply_status' => (string)$status,
+        ));
+        $this->response->redirect($url);
+    }
+
+    /**
+     * 构建 MD3 风格 HTML 邮件外壳
+     *
+     * @param string $contentHtml 内容 HTML 片段
+     * @param string $siteName    站点名称
+     * @param string $siteUrl     站点地址
+     * @return string 完整 HTML 邮件字符串
+     */
+    private static function buildEmailHtml($contentHtml, $siteName, $siteUrl)
+    {
+        $sn = htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8');
+        $su = htmlspecialchars($siteUrl,  ENT_QUOTES, 'UTF-8');
+        return '<!DOCTYPE html>'
+            . '<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+            . '<body style="margin:0;padding:0;background:#f0f4f8;-webkit-text-size-adjust:100%">'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"'
+            . ' style="background:#f0f4f8;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif">'
+            . '<tr><td align="center">'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px">'
+            . '<tr><td style="background:linear-gradient(135deg,#0061a4 0%,#4a7cc9 100%);border-radius:16px 16px 0 0;padding:24px 32px">'
+            . '<div style="color:#ffffff;font-size:20px;font-weight:700;line-height:1.3">' . $sn . '</div>'
+            . '<div style="color:rgba(255,255,255,.7);font-size:12px;margin-top:4px;letter-spacing:.3px">友链通知</div>'
+            . '</td></tr>'
+            . '<tr><td style="background:#ffffff;padding:28px 32px;border-left:1px solid #e5e7eb;border-right:1px solid #e5e7eb">'
+            . $contentHtml
+            . '</td></tr>'
+            . '<tr><td style="background:#f5f7fa;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 16px 16px;padding:14px 32px;text-align:center">'
+            . '<div style="font-size:11px;color:#9ca3af">'
+            . '此邮件由 <a href="' . $su . '" style="color:#0061a4;text-decoration:none">' . $sn . '</a> 自动发送 &middot; Powered by Links+'
+            . '</div>'
+            . '</td></tr>'
+            . '</table></td></tr></table>'
+            . '</body></html>';
+    }
+
+    /**
+     * 发送模板邮件
+     *
+     * @param string $to
+     * @param string $subjectTpl
+     * @param string $bodyTpl
+     * @param array<string,string> $vars
+     * @param string $replyTo
+     */
+    private function sendTemplatedMail($to, $subjectTpl, $bodyTpl, array $vars, $replyTo = '')
+    {
+        $settings = $this->options->plugin('Links');
+        $enabled = $this->normalizeOptionArray(isset($settings->apply_mail_enabled) ? $settings->apply_mail_enabled : array());
+        if (!in_array('enabled', $enabled, true)) {
+            return false;
+        }
+
+        $to = trim((string)$to);
+        if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        $safeVars = array();
+        foreach ($vars as $k => $v) {
+            $safeVars[$k] = htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+        }
+
+        $subject = Links_Plugin::renderTemplateString((string)$subjectTpl, $safeVars);
+        $body = Links_Plugin::renderTemplateString((string)$bodyTpl, $safeVars);
+        if (trim($subject) === '' || trim($body) === '') {
+            return false;
+        }
+
+        $driver = isset($settings->apply_mail_driver) ? trim((string)$settings->apply_mail_driver) : 'phpmail';
+        $adminTo = isset($settings->apply_mail_admin_to) ? trim((string)$settings->apply_mail_admin_to) : '';
+        $fromEmail = isset($settings->apply_mail_from_email) ? trim((string)$settings->apply_mail_from_email) : '';
+        if ($fromEmail === '' && $adminTo !== '' && filter_var($adminTo, FILTER_VALIDATE_EMAIL)) {
+            $fromEmail = $adminTo;
+        }
+        $fromName = isset($settings->apply_mail_from_name) ? trim((string)$settings->apply_mail_from_name) : 'Links Plus';
+
+        // SMTP 配置（仅 smtp 驱动使用）
+        $smtpHost   = isset($settings->apply_smtp_host)   ? trim((string)$settings->apply_smtp_host)   : '';
+        $smtpPort   = isset($settings->apply_smtp_port)   ? (int)$settings->apply_smtp_port             : 587;
+        $smtpSecure = isset($settings->apply_smtp_secure) ? trim((string)$settings->apply_smtp_secure) : 'tls';
+        $smtpUser   = isset($settings->apply_smtp_user)   ? trim((string)$settings->apply_smtp_user)   : '';
+        $smtpPass   = isset($settings->apply_smtp_pass)   ? trim((string)$settings->apply_smtp_pass)   : '';
+
+        // 检测 HTML 模板或纯文本，包装为完整 MD3 风格 HTML 邮件
+        $bodyTrimmed = ltrim($body);
+        $isHtml = isset($bodyTrimmed[0]) && $bodyTrimmed[0] === '<';
+        $contentHtml = $isHtml
+            ? $body
+            : '<p style="margin:0;font-size:14px;line-height:1.8;color:#374151">' . nl2br($body) . '</p>';
+        $fullHtml = self::buildEmailHtml($contentHtml, (string)$this->options->title, (string)$this->options->siteUrl);
+
+        $result = Links_Mailer::send(
+            $driver,
+            $to,
+            $subject,
+            $fullHtml,
+            array(
+                'from_email'  => $fromEmail,
+                'from_name'   => $fromName,
+                'reply_to'    => trim((string)$replyTo),
+                'smtp_host'   => $smtpHost,
+                'smtp_port'   => $smtpPort,
+                'smtp_secure' => $smtpSecure,
+                'smtp_user'   => $smtpUser,
+                'smtp_pass'   => $smtpPass,
+            )
+        );
+
+        return isset($result['ok']) ? (bool)$result['ok'] : false;
+    }
+
+    /**
+     * 新申请提醒管理员
+     *
+     * @param array<string,string> $link
+     */
+    private function notifyAdminForApply(array $link)
+    {
+        $settings = $this->options->plugin('Links');
+
+        $subjectTpl = isset($settings->apply_mail_tpl_admin_subject) && trim((string)$settings->apply_mail_tpl_admin_subject) !== ''
+            ? (string)$settings->apply_mail_tpl_admin_subject
+            : '【{{site_name}}】收到新的友链申请：{{name}}';
+        $bodyTpl = isset($settings->apply_mail_tpl_admin_body) && trim((string)$settings->apply_mail_tpl_admin_body) !== ''
+            ? (string)$settings->apply_mail_tpl_admin_body
+            : '<p style="margin:0 0 16px;font-size:14px;color:#374151;line-height:1.6">收到一条新的友链申请，请前往后台审核。</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px;border-bottom:1px solid #e5e7eb">站点名称</td><td style="padding:10px 16px;background:#f8fafc;color:#111827;font-weight:600;border-bottom:1px solid #e5e7eb">{{name}}</td></tr><tr><td style="padding:10px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb">站点地址</td><td style="padding:10px 16px;border-bottom:1px solid #e5e7eb"><a href="{{url}}" style="color:#0061a4">{{url}}</a></td></tr><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;border-bottom:1px solid #e5e7eb">描述</td><td style="padding:10px 16px;background:#f8fafc;color:#374151;border-bottom:1px solid #e5e7eb">{{description}}</td></tr><tr><td style="padding:10px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb">邮箱</td><td style="padding:10px 16px;color:#374151;border-bottom:1px solid #e5e7eb">{{email}}</td></tr><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280">分类</td><td style="padding:10px 16px;background:#f8fafc;color:#374151">{{sort}}</td></tr></table></div><div style="margin-top:20px;text-align:center"><a href="{{manage_url}}" style="display:inline-block;padding:10px 24px;background:#0061a4;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">前往审核</a></div>';
+
+        $vars = array(
+            'site_name'   => (string)$this->options->title,
+            'site_url'    => (string)$this->options->siteUrl,
+            'manage_url'  => Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', (string)$this->options->adminUrl),
+            'name'        => isset($link['name'])        ? $link['name']        : '',
+            'url'         => isset($link['url'])         ? $link['url']         : '',
+            'image'       => isset($link['image'])       ? $link['image']       : '',
+            'sort'        => isset($link['sort'])        ? $link['sort']        : '',
+            'description' => isset($link['description']) ? $link['description'] : '',
+            'email'       => isset($link['email'])       ? $link['email']       : '',
+            'user'        => isset($link['user'])        ? $link['user']        : '',
+            'reason'      => '',
+        );
+
+        // 邮件通知管理员
+        $adminEmail = isset($settings->apply_mail_admin_to) ? trim((string)$settings->apply_mail_admin_to) : '';
+        $replyTo = isset($link['email']) ? trim((string)$link['email']) : '';
+        if ($adminEmail !== '' && filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+            $this->sendTemplatedMail($adminEmail, $subjectTpl, $bodyTpl, $vars, $replyTo);
+        }
+
+        return true;
+    }
+
+    /**
+     * 通知申请者审核结果
+     *
+     * @param array<string,mixed> $link
+     */
+    private function notifyApplicantForAudit(array $link, $approved, $reason = '')
+    {
+        $applicant = isset($link['email']) ? trim((string)$link['email']) : '';
+        if ($applicant === '' || !filter_var($applicant, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        $settings = $this->options->plugin('Links');
+        if ($approved) {
+            $subjectTpl = isset($settings->apply_mail_tpl_approved_subject) && trim((string)$settings->apply_mail_tpl_approved_subject) !== ''
+                ? (string)$settings->apply_mail_tpl_approved_subject
+                : '【{{site_name}}】你的友链申请已通过';
+            $bodyTpl = isset($settings->apply_mail_tpl_approved_body) && trim((string)$settings->apply_mail_tpl_approved_body) !== ''
+                ? (string)$settings->apply_mail_tpl_approved_body
+                : '<div style="text-align:center;padding-bottom:20px"><div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:#e8f3ff;font-size:26px">✓</div><p style="margin:10px 0 0;font-size:20px;font-weight:700;color:#0061a4">申请已通过！</p></div><p style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.7">Hi <strong>{{name}}</strong>，你提交至 <strong>{{site_name}}</strong> 的友链申请已审核通过，感谢你的申请！</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:20px"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px">友链地址</td><td style="padding:10px 16px;background:#f8fafc"><a href="{{url}}" style="color:#0061a4;font-weight:600">{{url}}</a></td></tr></table></div><p style="margin:0;font-size:14px;color:#6b7280">🌐 欢迎互链，期待与你交流！</p>';
+        } else {
+            $subjectTpl = isset($settings->apply_mail_tpl_rejected_subject) && trim((string)$settings->apply_mail_tpl_rejected_subject) !== ''
+                ? (string)$settings->apply_mail_tpl_rejected_subject
+                : '【{{site_name}}】你的友链申请未通过';
+            $bodyTpl = isset($settings->apply_mail_tpl_rejected_body) && trim((string)$settings->apply_mail_tpl_rejected_body) !== ''
+                ? (string)$settings->apply_mail_tpl_rejected_body
+                : '<p style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.7">Hi <strong>{{name}}</strong>，很遗憾，你提交至 <strong>{{site_name}}</strong> 的友链申请本次未能通过审核。</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:20px"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px;border-bottom:1px solid #e5e7eb">友链地址</td><td style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e5e7eb"><a href="{{url}}" style="color:#0061a4">{{url}}</a></td></tr><tr><td style="padding:10px 16px;color:#6b7280">驳回原因</td><td style="padding:10px 16px;color:#374151">{{reason}}</td></tr></table></div><p style="margin:0;font-size:13px;color:#9ca3af">如有疑问，欢迎直接回复此邮件与我们联系。</p>';
+        }
+
+        $vars = array(
+            'site_name' => (string)$this->options->title,
+            'site_url' => (string)$this->options->siteUrl,
+            'name' => isset($link['name']) ? (string)$link['name'] : '',
+            'url' => isset($link['url']) ? (string)$link['url'] : '',
+            'image' => isset($link['image']) ? (string)$link['image'] : '',
+            'sort' => isset($link['sort']) ? (string)$link['sort'] : '',
+            'description' => isset($link['description']) ? (string)$link['description'] : '',
+            'email' => $applicant,
+            'user' => isset($link['user']) ? (string)$link['user'] : '',
+            'reason' => $reason !== '' ? $reason : '不符合本站友链收录规则',
+        );
+
+        return $this->sendTemplatedMail($applicant, $subjectTpl, $bodyTpl, $vars, '');
+    }
 
     public function insertLink()
     {
@@ -74,7 +512,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function deleteLink()
     {
-        $lids = $this->request->filter('int')->getArray('lid');
+        $lids = $this->getTargetLids();
         $deleteCount = 0;
         if ($lids && is_array($lids)) {
             foreach ($lids as $lid) {
@@ -96,7 +534,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function enableLink()
     {
-        $lids = $this->request->filter('int')->getArray('lid');
+        $lids = $this->getTargetLids();
         $enableCount = 0;
         if ($lids && is_array($lids)) {
             foreach ($lids as $lid) {
@@ -118,7 +556,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function prohibitLink()
     {
-        $lids = $this->request->filter('int')->getArray('lid');
+        $lids = $this->getTargetLids();
         $prohibitCount = 0;
         if ($lids && is_array($lids)) {
             foreach ($lids as $lid) {
@@ -136,6 +574,207 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
         /** 转向原页 */
         $this->response->redirect(Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', $this->options->adminUrl));
+    }
+
+    /**
+     * 审核通过（state: 2 -> 1），并通知申请者
+     */
+    public function approveLink()
+    {
+        $lids = $this->getTargetLids();
+        $approvedCount = 0;
+        $notifyCount = 0;
+
+        if ($lids && is_array($lids)) {
+            foreach ($lids as $lid) {
+                $row = $this->db->fetchRow(
+                    $this->db->select()->from($this->prefix . 'links')->where('lid = ?', $lid)->limit(1)
+                );
+                if (!$row) {
+                    continue;
+                }
+
+                $prevState = isset($row['state']) ? (int)$row['state'] : 0;
+                $ok = $this->db->query(
+                    $this->db->update($this->prefix . 'links')->rows(array('state' => '1'))->where('lid = ?', $lid)
+                );
+                if ($ok) {
+                    $approvedCount++;
+                    if ($prevState === 2 && $this->notifyApplicantForAudit($row, true, '')) {
+                        $notifyCount++;
+                    }
+                }
+            }
+        }
+
+        $msg = $approvedCount > 0
+            ? _t('已通过 %d 条友链申请，通知发送 %d 封', $approvedCount, $notifyCount)
+            : _t('没有待审核友链被通过');
+        $this->widget('Widget_Notice')->set($msg, null, $approvedCount > 0 ? 'success' : 'notice');
+
+        $this->response->redirect(Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', $this->options->adminUrl));
+    }
+
+    /**
+     * 审核驳回（state: 2 -> 0），并通知申请者
+     */
+    public function rejectLink()
+    {
+        $lids = $this->getTargetLids();
+        $reason = $this->sanitizeText($this->request->filter('xss')->reason, 120);
+        if ($reason === '') {
+            $reason = '不符合本站友链收录规则';
+        }
+
+        $rejectedCount = 0;
+        $notifyCount = 0;
+
+        if ($lids && is_array($lids)) {
+            foreach ($lids as $lid) {
+                $row = $this->db->fetchRow(
+                    $this->db->select()->from($this->prefix . 'links')->where('lid = ?', $lid)->limit(1)
+                );
+                if (!$row) {
+                    continue;
+                }
+
+                $prevState = isset($row['state']) ? (int)$row['state'] : 0;
+                $ok = $this->db->query(
+                    $this->db->update($this->prefix . 'links')->rows(array('state' => '0'))->where('lid = ?', $lid)
+                );
+                if ($ok) {
+                    $rejectedCount++;
+                    if ($prevState === 2 && $this->notifyApplicantForAudit($row, false, $reason)) {
+                        $notifyCount++;
+                    }
+                }
+            }
+        }
+
+        $msg = $rejectedCount > 0
+            ? _t('已驳回 %d 条友链申请，通知发送 %d 封', $rejectedCount, $notifyCount)
+            : _t('没有待审核友链被驳回');
+        $this->widget('Widget_Notice')->set($msg, null, $rejectedCount > 0 ? 'success' : 'notice');
+
+        $this->response->redirect(Typecho_Common::url('extending.php?panel=Links%2Fmanage-links.php', $this->options->adminUrl));
+    }
+
+    /**
+     * 前台提交友链申请（公开入口）
+     */
+    public function submitApplyLink()
+    {
+        if (!$this->request->isPost()) {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+
+        // 蜜罐：命中后伪装成功，降低机器人探测有效性
+        $honeypot = trim((string)$this->request->get('lp_contact'));
+        if ($honeypot !== '') {
+            $this->redirectApplyStatus('ok');
+            return;
+        }
+
+        $token = trim((string)$this->request->get('apply_token'));
+        if (!Links_Plugin::verifyApplyToken($token)) {
+            $this->redirectApplyStatus('token');
+            return;
+        }
+
+        $clientIp = Links_Plugin::getClientIp();
+        if ($this->hitApplyRateLimit($clientIp)) {
+            $this->redirectApplyStatus('rate_limited');
+            return;
+        }
+
+        $settings = $this->options->plugin('Links');
+        $enabled = $this->normalizeOptionArray(isset($settings->enable_link_apply) ? $settings->enable_link_apply : array());
+        if (!in_array('enabled', $enabled, true)) {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+
+        $requireDescription = in_array('required', $this->normalizeOptionArray(isset($settings->apply_require_description) ? $settings->apply_require_description : array()), true);
+        $requireEmail = in_array('required', $this->normalizeOptionArray(isset($settings->apply_require_email) ? $settings->apply_require_email : array()), true);
+        $requireUser = in_array('required', $this->normalizeOptionArray(isset($settings->apply_require_user) ? $settings->apply_require_user : array()), true);
+
+        $name = $this->sanitizeText($this->request->filter('xss')->name, 50);
+        $url = $this->sanitizeUrl($this->request->url);
+        $image = $this->sanitizeUrl($this->request->image);
+        $description = $this->sanitizeText($this->request->filter('xss')->description, 200);
+        $email = $this->sanitizeText($this->request->filter('xss')->email, 50);
+        $user = $this->sanitizeText($this->request->filter('xss')->user, 200);
+
+        $sort = $this->sanitizeText(isset($settings->apply_default_sort) ? $settings->apply_default_sort : '', 50);
+        if ($sort === '') {
+            $sort = '友链申请';
+        }
+
+        if ($name === '' || $url === '' || $image === '') {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+        if ($requireDescription && $description === '') {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+        if ($requireEmail && $email === '') {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+        if ($requireUser && $user === '') {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+
+        $exists = $this->db->fetchRow(
+            $this->db->select()->from($this->prefix . 'links')->where('url = ?', $url)->limit(1)
+        );
+        if ($exists) {
+            $this->redirectApplyStatus('duplicate');
+            return;
+        }
+
+        $maxOrderObj = $this->db->fetchObject(
+            $this->db->select(array('MAX(order)' => 'maxOrder'))->from($this->prefix . 'links')
+        );
+        $nextOrder = ($maxOrderObj && isset($maxOrderObj->maxOrder)) ? ((int)$maxOrderObj->maxOrder + 1) : 1;
+
+        $row = array(
+            'name' => $name,
+            'url' => $url,
+            'sort' => $sort,
+            'email' => $email !== '' ? $email : null,
+            'image' => $image,
+            'description' => $description !== '' ? $description : null,
+            'user' => $user !== '' ? $user : null,
+            'state' => '2',
+            'order' => $nextOrder,
+        );
+
+        try {
+            $this->db->query($this->db->insert($this->prefix . 'links')->rows($row));
+        } catch (Exception $e) {
+            $this->redirectApplyStatus('server_error');
+            return;
+        }
+
+        $this->notifyAdminForApply(array(
+            'name' => $name,
+            'url' => $url,
+            'sort' => $sort,
+            'email' => $email,
+            'image' => $image,
+            'description' => $description,
+            'user' => $user,
+        ));
+
+        $this->redirectApplyStatus('ok');
     }
 
     public function sortLink()
@@ -753,21 +1392,32 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function action()
     {
-        Helper::security()->protect();
-        $user = Typecho_Widget::widget('Widget_User');
-        $user->pass('administrator');
         $this->db = Typecho_Db::get();
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
+
+        // 前台公开入口：友链申请提交
+        if ($this->request->is('do=apply-submit')) {
+            $this->submitApplyLink();
+            return;
+        }
+
+        // 其余操作全部要求管理员 + CSRF 防护
+        Helper::security()->protect();
+        $user = Typecho_Widget::widget('Widget_User');
+        $user->pass('administrator');
+
         $this->on($this->request->is('do=insert'))->insertLink();
         $this->on($this->request->is('do=update'))->updateLink();
         $this->on($this->request->is('do=delete'))->deleteLink();
         $this->on($this->request->is('do=enable'))->enableLink();
         $this->on($this->request->is('do=prohibit'))->prohibitLink();
+        $this->on($this->request->is('do=approve'))->approveLink();
+        $this->on($this->request->is('do=reject'))->rejectLink();
         $this->on($this->request->is('do=sort'))->sortLink();
         $this->on($this->request->is('do=email-logo'))->emailLogo();
-    $this->on($this->request->is('do=rewrite'))->rewriteContents();
-    $this->on($this->request->is('do=check-link'))->checkLink();
+        $this->on($this->request->is('do=rewrite'))->rewriteContents();
+        $this->on($this->request->is('do=check-link'))->checkLink();
         $this->on($this->request->is('do=update_templates'))->updateTemplates();
         $this->response->redirect($this->options->adminUrl);
     }

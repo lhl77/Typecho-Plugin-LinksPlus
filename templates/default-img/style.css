@@ -1,2 +1,12 @@
 .links-plus-item{list-style:none;display:inline-block;margin:6px}
 .links-plus-avatar{border-radius:10px;border:1px solid rgba(0,0,0,.06);display:block}
+[data-theme="dark"] .links-plus-avatar,
+body.dark .links-plus-avatar,
+body.dark-mode .links-plus-avatar,
+body.dark-theme .links-plus-avatar,
+body.theme-dark .links-plus-avatar,
+html.dark .links-plus-avatar,
+html.dark-mode .links-plus-avatar,
+html.dark-theme .links-plus-avatar,
+html.theme-dark .links-plus-avatar{border-color:rgba(255,255,255,.10)}
+@media(prefers-color-scheme:dark){.links-plus-avatar{border-color:rgba(255,255,255,.10)}}

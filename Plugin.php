@@ -1,17 +1,24 @@
 <?php
 
 /**
- * 友情链接插件 by LHL (第三方增强版)
+ * 友情链接插件 by LHL (增强版)
  * 
- * @package Links Plus
+ * @package Links+
  * @author LHL
- * @version 1.3.3
- * @dependence 14.10.10-*
+ * @version 1.4.0
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
  * 
+ * version 1.4.0 at 2026-05-19 by LHL
+ * 优化 友情链接管理界面显示为md3卡片，移动端下体验良好
+ * 增加 短代码功能 [LinksPlus /]
+ * 增加 友链申请功能，通过AJax提交审核，并可通过邮箱通知
+ * 增加 多种主题的友链界面复刻主题
+ * ...更新比较多
+ * 
+ * 
  * version 1.3.3 at 2025-03-02 by LHL
- * 修复 Typecho 1.3.0 下管理界面显示问题
- * 添加 一键检查友链网址是否能够正常访问（后端检测，前端兜底）
+ * 修复 Typecho 1.3.0下管理界面显示问题
+ * 添加 一键检查友链网址是否能够正常访问
  * 
  * version 1.3.2 at 2025-02-10 by LHL
  * 修复 admin 运行目录非根目录时相对路径出错的问题
@@ -226,6 +233,669 @@ class Links_Plugin implements Typecho_Plugin_Interface
             }
         }
     }
+
+    /**
+     * 为模板 CSS 注入自定义亮/暗 class 的选择器覆盖规则（每个模板仅注入一次）。
+     *
+     * 模板 style.css 中有硬编码的暗色选择器（如 body.dark .lp-xxx），
+     * 若用户配置了额外 class（如 body.night），则生成相同属性的追加规则。
+     *
+     * @param string $templateName 模板名称
+     * @param array  $manifest     模板 manifest 数组
+     * @param object $settings     插件设置对象
+     */
+    public static function injectCustomDarkOverrideOnce($templateName, array $manifest, $settings)
+    {
+        static $injected = array();
+        $key = 'cdark:' . $templateName;
+        if (isset($injected[$key])) {
+            return;
+        }
+
+        $inject = isset($manifest['inject']) && is_array($manifest['inject']) ? $manifest['inject'] : array();
+        if (empty($inject['css'])) {
+            return;
+        }
+
+        $css = self::readTemplateFile($templateName, 'style.css');
+        if (!$css || trim($css) === '') {
+            return;
+        }
+
+        $rawDark  = isset($settings->apply_dark_classes)  ? trim((string)$settings->apply_dark_classes)  : '';
+        $rawLight = isset($settings->apply_light_classes) ? trim((string)$settings->apply_light_classes) : '';
+
+        // 始终生成 [data-lp-theme="dark"] 等效选择器（使 data-lp-theme 包裹层能触发模板暗色样式）
+        $allCss  = self::buildTemplateLpThemeAliasCss($css);
+        // 追加用户自定义亮/暗 class 的等效规则（仅当用户配置了自定义 class 时）
+        $allCss .= self::buildCustomDarkCssOverride($css, $rawDark, $rawLight);
+
+        if ($allCss === '') {
+            return;
+        }
+
+        $injected[$key] = true;
+        echo '<style id="links-plus-tpl-' . htmlspecialchars($templateName, ENT_QUOTES, 'UTF-8') . '-cdark">'
+            . $allCss . '</style>';
+    }
+
+    /**
+     * 从模板 CSS 的 [data-theme="dark"] 规则中提取内层选择器，
+     * 生成对应的 [data-lp-theme="dark"] 等效规则，使 output_str 的强制暗色包裹层生效。
+     *
+     * @param string $css 模板 style.css 内容
+     * @return string 追加的 CSS 字符串
+     */
+    public static function buildTemplateLpThemeAliasCss($css)
+    {
+        if (trim($css) === '') {
+            return '';
+        }
+        $extra = '';
+        preg_match_all('/([^{}@]+)\{([^{}]+)\}/s', $css, $matches, PREG_SET_ORDER);
+        foreach ($matches as $match) {
+            $selectorGroup = trim($match[1]);
+            $declarations  = trim($match[2]);
+            if ($declarations === '' || strpos($selectorGroup, '[data-theme="dark"]') === false) {
+                continue;
+            }
+            foreach (preg_split('/,(?![^(]*\))/', $selectorGroup) as $part) {
+                $part = trim($part);
+                if (strpos($part, '[data-theme="dark"]') === 0) {
+                    $innerSel = trim(substr($part, strlen('[data-theme="dark"]')));
+                    if ($innerSel !== '') {
+                        $extra .= '[data-lp-theme="dark"] ' . $innerSel . '{' . $declarations . '}';
+                    }
+                    break;
+                }
+            }
+        }
+        return $extra;
+    }
+
+    /**
+     * 解析模板 CSS，为暗/亮模式规则生成自定义 class 的等效选择器块。
+     *
+     * 识别格式：[data-theme="dark"] .inner（或 [data-lp-theme="light"] .inner），
+     * 对每个自定义 class 生成 body.cls .inner / html.cls .inner 规则。
+     *
+     * @param string $css      模板 style.css 内容
+     * @param string $rawDark  自定义暗色 class 字符串（空格/逗号分隔）
+     * @param string $rawLight 自定义亮色 class 字符串
+     * @return string 追加的 CSS 字符串
+     */
+    public static function buildCustomDarkCssOverride($css, $rawDark, $rawLight)
+    {
+        $darkClasses  = array();
+        $lightClasses = array();
+
+        foreach (preg_split('/[\s,]+/', $rawDark,  -1, PREG_SPLIT_NO_EMPTY) as $cls) {
+            $cls = preg_replace('/[^a-zA-Z0-9_-]/', '', $cls);
+            if ($cls !== '') $darkClasses[] = $cls;
+        }
+        foreach (preg_split('/[\s,]+/', $rawLight, -1, PREG_SPLIT_NO_EMPTY) as $cls) {
+            $cls = preg_replace('/[^a-zA-Z0-9_-]/', '', $cls);
+            if ($cls !== '') $lightClasses[] = $cls;
+        }
+
+        if (empty($darkClasses) && empty($lightClasses)) {
+            return '';
+        }
+
+        $extra = '';
+        // 仅匹配顶层规则（不含 @media 块内规则）
+        preg_match_all('/([^{}@]+)\{([^{}]+)\}/s', $css, $matches, PREG_SET_ORDER);
+
+        foreach ($matches as $match) {
+            $selectorGroup = trim($match[1]);
+            $declarations  = trim($match[2]);
+            if ($declarations === '') {
+                continue;
+            }
+
+            $isDark  = strpos($selectorGroup, '[data-theme="dark"]')    !== false;
+            $isLight = strpos($selectorGroup, '[data-lp-theme="light"]') !== false;
+            if (!$isDark && !$isLight) {
+                continue;
+            }
+
+            // 从选择器组中提取内层选择器（[data-theme="dark"] 后面的部分）
+            $innerSel = null;
+            $darkTrigger  = '[data-theme="dark"]';
+            $lightTrigger = '[data-lp-theme="light"]';
+            foreach (preg_split('/,(?![^(]*\))/', $selectorGroup) as $part) {
+                $part = trim($part);
+                if ($isDark && strpos($part, $darkTrigger) === 0) {
+                    $innerSel = trim(substr($part, strlen($darkTrigger)));
+                    break;
+                }
+                if ($isLight && strpos($part, $lightTrigger) === 0) {
+                    $innerSel = trim(substr($part, strlen($lightTrigger)));
+                    break;
+                }
+            }
+
+            if ($innerSel === null || $innerSel === '') {
+                continue;
+            }
+
+            $newSelectors = array();
+            if ($isDark) {
+                foreach ($darkClasses as $cls) {
+                    $newSelectors[] = 'body.' . $cls . ' ' . $innerSel;
+                    $newSelectors[] = 'html.' . $cls . ' ' . $innerSel;
+                }
+            } elseif ($isLight) {
+                foreach ($lightClasses as $cls) {
+                    $newSelectors[] = 'body.' . $cls . ' ' . $innerSel;
+                    $newSelectors[] = 'html.' . $cls . ' ' . $innerSel;
+                }
+            }
+
+            if (!empty($newSelectors)) {
+                $extra .= implode(',', $newSelectors) . '{' . $declarations . '}';
+            }
+        }
+
+        return $extra;
+    }
+
+    /**
+     */
+    public static function buildTemplateWrapper(array $manifest)
+    {
+        if (!isset($manifest['wrapper']) || !is_array($manifest['wrapper'])) {
+            return array('', '');
+        }
+
+        $wrapper = $manifest['wrapper'];
+        $tag = isset($wrapper['tag']) ? strtolower(trim((string)$wrapper['tag'])) : '';
+        if ($tag === '') {
+            return array('', '');
+        }
+
+        // 仅允许常见容器标签，避免注入风险
+        if (!in_array($tag, array('ul', 'ol', 'div'), true)) {
+            return array('', '');
+        }
+
+        $attrs = '';
+        if (isset($wrapper['class']) && trim((string)$wrapper['class']) !== '') {
+            $attrs .= ' class="' . htmlspecialchars((string)$wrapper['class'], ENT_QUOTES, 'UTF-8') . '"';
+        }
+        if (isset($wrapper['id']) && trim((string)$wrapper['id']) !== '') {
+            $attrs .= ' id="' . htmlspecialchars((string)$wrapper['id'], ENT_QUOTES, 'UTF-8') . '"';
+        }
+        if (isset($wrapper['attrs']) && is_array($wrapper['attrs'])) {
+            foreach ($wrapper['attrs'] as $k => $v) {
+                $k = trim((string)$k);
+                if ($k === '' || !preg_match('/^[A-Za-z_:][-A-Za-z0-9_:.]*$/', $k)) {
+                    continue;
+                }
+                $attrs .= ' ' . $k . '="' . htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8') . '"';
+            }
+        }
+
+        return array('<' . $tag . $attrs . '>', '</' . $tag . '>');
+    }
+
+    /**
+     * 将 checkbox/select 的值统一转成数组
+     *
+     * @param mixed $value
+     * @return array<int,string>
+     */
+    private static function normalizeOptionArray($value)
+    {
+        if (is_array($value)) {
+            $result = array();
+            foreach ($value as $item) {
+                $item = trim((string)$item);
+                if ($item !== '') {
+                    $result[] = $item;
+                }
+            }
+            return array_values(array_unique($result));
+        }
+
+        $value = trim((string)$value);
+        return $value === '' ? array() : array($value);
+    }
+
+    /**
+     * 获取客户端 IP：优先 REMOTE_ADDR，仅在缺失时回退代理头
+     */
+    public static function getClientIp()
+    {
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? trim((string)$_SERVER['REMOTE_ADDR']) : '';
+        if ($ip !== '') {
+            return $ip;
+        }
+
+        $cf = isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? trim((string)$_SERVER['HTTP_CF_CONNECTING_IP']) : '';
+        if ($cf !== '') {
+            return $cf;
+        }
+
+        $xff = isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? trim((string)$_SERVER['HTTP_X_FORWARDED_FOR']) : '';
+        if ($xff !== '') {
+            $parts = explode(',', $xff);
+            if (!empty($parts)) {
+                return trim((string)$parts[0]);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 友链申请表单签名（支持重写后的静态内容长期可用）
+     */
+    public static function buildApplyToken()
+    {
+        $options = Typecho_Widget::widget('Widget_Options');
+        $secret = isset($options->secret) && trim((string)$options->secret) !== ''
+            ? (string)$options->secret
+            : (string)$options->siteUrl;
+        return hash_hmac('sha256', 'links-plus-apply-form', $secret);
+    }
+
+    /**
+     * 校验友链申请表单签名
+     */
+    public static function verifyApplyToken($token)
+    {
+        $expected = self::buildApplyToken();
+        $actual = trim((string)$token);
+        if ($actual === '') {
+            return false;
+        }
+
+        if (function_exists('hash_equals')) {
+            return hash_equals($expected, $actual);
+        }
+
+        return $expected === $actual;
+    }
+
+    /**
+     * 判断当前输出上下文是否需要渲染“友链申请”
+     */
+    public static function shouldRenderApplyForm($context, $settings)
+    {
+        $enabled = self::normalizeOptionArray(isset($settings->enable_link_apply) ? $settings->enable_link_apply : array());
+        if (!in_array('enabled', $enabled, true)) {
+            return false;
+        }
+
+        // OnlyForm 短代码：只要功能已启用，不检查显示位置限制
+        if ($context === 'shortcode-onlyform') {
+            return true;
+        }
+
+        $targets = self::normalizeOptionArray(isset($settings->apply_display_targets) ? $settings->apply_display_targets : array());
+        if (empty($targets)) {
+            return false;
+        }
+
+        return in_array((string)$context, $targets, true);
+    }
+
+    /**
+     * 渲染模板字符串（邮件/HTML 复用）
+     *
+     * 模板变量格式：{{name}}
+     */
+    public static function renderTemplateString($template, array $vars)
+    {
+        $replace = array();
+        foreach ($vars as $k => $v) {
+            $replace['{{' . $k . '}}'] = (string)$v;
+        }
+        return strtr((string)$template, $replace);
+    }
+
+    /**
+     * 前台申请状态提示
+     */
+    private static function getApplyStatusMessageHtml()
+    {
+        $request = Typecho_Request::getInstance();
+        $status = strtolower(trim((string)$request->get('links_apply_status')));
+        if ($status === '') {
+            return '';
+        }
+
+        $map = array(
+            'ok' => array('ok', _t('申请已提交，正在等待管理员审核。')),
+            'duplicate' => array('warn', _t('该友链地址已存在，请勿重复提交。')),
+            'rate_limited' => array('warn', _t('提交过于频繁，请稍后再试。')),
+            'invalid' => array('err', _t('提交失败：参数不合法，请检查后重试。')),
+            'token' => array('err', _t('提交失败：表单校验未通过，请刷新页面后重试。')),
+            'server_error' => array('err', _t('提交失败：服务器内部错误，请稍后重试。')),
+        );
+
+        if (!isset($map[$status])) {
+            return '';
+        }
+
+        $type = $map[$status][0];
+        $msg = htmlspecialchars($map[$status][1], ENT_QUOTES, 'UTF-8');
+
+        return '<div class="links-plus-apply-msg links-plus-apply-msg-' . $type . '">' . $msg . '</div>';
+    }
+
+    /**
+     * 生成前台"接受友链申请"表单 HTML
+    /**
+     * 生成前台"接受友链申请"表单 HTML
+     * 模式：'' = 内嵌（折叠框），'__popup__' = 弹窗按钮（AJAX 提交，不刷页）
+     */
+    public static function renderApplyFormHtml($context)
+    {
+        $options = Typecho_Widget::widget('Widget_Options');
+        $settings = $options->plugin('Links');
+        if (!self::shouldRenderApplyForm($context, $settings)) {
+            return '';
+        }
+
+        $requireDescription = in_array('required', self::normalizeOptionArray(isset($settings->apply_require_description) ? $settings->apply_require_description : array()), true);
+        $requireEmail       = in_array('required', self::normalizeOptionArray(isset($settings->apply_require_email)       ? $settings->apply_require_email       : array()), true);
+        $requireUser        = in_array('required', self::normalizeOptionArray(isset($settings->apply_require_user)        ? $settings->apply_require_user        : array()), true);
+        $showUserField      = in_array('show',     self::normalizeOptionArray(isset($settings->apply_show_user_field)     ? $settings->apply_show_user_field     : array('show')), true);
+
+        $defaultSort = isset($settings->apply_default_sort) ? trim((string)$settings->apply_default_sort) : '';
+        if ($defaultSort === '') {
+            $defaultSort = _t('友链申请');
+        }
+
+        $customTitle   = isset($settings->apply_title)           ? trim((string)$settings->apply_title)           : '';
+        $customDesc    = isset($settings->apply_desc)            ? trim((string)$settings->apply_desc)            : '';
+        $colorMode     = isset($settings->apply_color_mode)      ? trim((string)$settings->apply_color_mode)      : 'auto';
+        $popupBtnStyle = isset($settings->apply_popup_btn_style) ? trim((string)$settings->apply_popup_btn_style) : 'default';
+        $defaultOpen   = in_array('open', self::normalizeOptionArray(isset($settings->apply_default_open) ? $settings->apply_default_open : array('open')), true);
+
+        $actionUrl  = Typecho_Common::url('action/links-apply', $options->siteUrl);
+        $applyToken = self::buildApplyToken();
+        $statusHtml = self::getApplyStatusMessageHtml();
+
+        $nameReq  = ' required';
+        $urlReq   = ' required';
+        $imgReq   = ' required';
+        $descReq  = $requireDescription ? ' required' : '';
+        $emailReq = $requireEmail       ? ' required' : '';
+        $userReq  = $requireUser        ? ' required' : '';
+
+        $fieldHtml  = '';
+        $fieldHtml .= '<label class="links-plus-apply-label">' . _t('友链名称') . ' *</label>';
+        $fieldHtml .= '<input class="links-plus-apply-input" type="text" name="name" maxlength="50" placeholder="' . htmlspecialchars(_t('请输入站点名称'), ENT_QUOTES, 'UTF-8') . '"' . $nameReq . ' />';
+        $fieldHtml .= '<label class="links-plus-apply-label">' . _t('友链地址') . ' *</label>';
+        $fieldHtml .= '<input class="links-plus-apply-input" type="url" name="url" maxlength="200" placeholder="https://example.com"' . $urlReq . ' />';
+        $fieldHtml .= '<label class="links-plus-apply-label">' . _t('友链图片') . ' *</label>';
+        $fieldHtml .= '<input class="links-plus-apply-input" type="url" name="image" maxlength="200" placeholder="https://example.com/logo.png"' . $imgReq . ' />';
+        $fieldHtml .= '<label class="links-plus-apply-label">' . _t('友链描述') . ($requireDescription ? ' *' : '') . '</label>';
+        $fieldHtml .= '<textarea class="links-plus-apply-input" name="description" maxlength="200" rows="3" placeholder="' . htmlspecialchars(_t('可选：站点简介'), ENT_QUOTES, 'UTF-8') . '"' . $descReq . '></textarea>';
+        $fieldHtml .= '<label class="links-plus-apply-label">' . _t('邮箱') . ($requireEmail ? ' *' : '') . '</label>';
+        $fieldHtml .= '<input class="links-plus-apply-input" type="email" name="email" maxlength="50" placeholder="name@example.com"' . $emailReq . ' />';
+        if ($showUserField) {
+            $fieldHtml .= '<label class="links-plus-apply-label">' . _t('自定义数据') . ($requireUser ? ' *' : '') . '</label>';
+            $fieldHtml .= '<input class="links-plus-apply-input" type="text" name="user" maxlength="200" placeholder="' . htmlspecialchars(_t('可选：站点补充信息'), ENT_QUOTES, 'UTF-8') . '"' . $userReq . ' />';
+        }
+
+        $honeypotHtml = '<div class="links-plus-apply-hp" aria-hidden="true"><label>Leave this empty</label><input type="text" name="lp_contact" value="" tabindex="-1" autocomplete="off" /></div>';
+
+        $templateName = isset($settings->template_apply) ? trim((string)$settings->template_apply) : '';
+        $isPopup      = ($templateName === '__popup__');
+
+        $themeAttr = '';
+        if ($colorMode === 'light') {
+            $themeAttr = ' data-lp-theme="light"';
+        } elseif ($colorMode === 'dark') {
+            $themeAttr = ' data-lp-theme="dark"';
+        }
+
+        $popupBtnCls = 'lp-apply-open-btn';
+        if (in_array($popupBtnStyle, array('outline', 'ghost', 'gradient'), true)) {
+            $popupBtnCls .= ' lp-apply-open-btn--' . $popupBtnStyle;
+        }
+
+        // ---- CSS + JS（每个请求只注入一次）----
+        static $assetsInjected = false;
+        $assetsBlock = '';
+        if (!$assetsInjected) {
+            $assetsInjected = true;
+            $dm9 = '[data-theme="dark"] %1$s,[data-lp-theme="dark"] %1$s,body.dark %1$s,body.dark-mode %1$s,body.dark-theme %1$s,body.theme-dark %1$s,html.dark %1$s,html.dark-mode %1$s,html.dark-theme %1$s,html.theme-dark %1$s';
+            $lm  = '[data-lp-theme="light"] %1$s';
+            // 追加用户自定义亮/暗 class
+            $rawDark = isset($settings->apply_dark_classes) ? trim((string)$settings->apply_dark_classes) : '';
+            if ($rawDark !== '') {
+                foreach (preg_split('/[\s,]+/', $rawDark, -1, PREG_SPLIT_NO_EMPTY) as $cls) {
+                    $cls = preg_replace('/[^a-zA-Z0-9_-]/', '', $cls);
+                    if ($cls !== '') { $dm9 .= ',body.' . $cls . ' %1$s,html.' . $cls . ' %1$s'; }
+                }
+            }
+            $rawLight = isset($settings->apply_light_classes) ? trim((string)$settings->apply_light_classes) : '';
+            if ($rawLight !== '') {
+                foreach (preg_split('/[\s,]+/', $rawLight, -1, PREG_SPLIT_NO_EMPTY) as $cls) {
+                    $cls = preg_replace('/[^a-zA-Z0-9_-]/', '', $cls);
+                    if ($cls !== '') { $lm .= ',body.' . $cls . ' %1$s,html.' . $cls . ' %1$s'; }
+                }
+            }
+            $assetsBlock = '<style id="links-plus-apply-style">'
+                . '@keyframes lp-btn-grad{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}'
+                . '@keyframes lp-check{0%{transform:scale(0) rotate(-45deg);opacity:0}60%{transform:scale(1.3) rotate(5deg)}100%{transform:scale(1) rotate(0deg);opacity:1}}'
+                . ':root{--lp-btn-h1:215;--lp-btn-h2:275}'
+                . '.links-plus-apply{margin-top:18px;padding:18px 20px;border:1px solid rgba(0,0,0,.08);border-radius:14px;background:rgba(255,255,255,.92)}'
+                . '.links-plus-apply-summary{display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none;-webkit-user-select:none;user-select:none;gap:8px}'
+                . '.links-plus-apply-summary::-webkit-details-marker{display:none}'
+                . '.links-plus-apply-title{font-size:16px;font-weight:700;color:#1f2937}'
+                . '.links-plus-apply-chevron{width:18px;height:18px;flex-shrink:0;transition:transform .25s;color:#6b7280}'
+                . '.links-plus-apply[open] .links-plus-apply-chevron{transform:rotate(180deg)}'
+                . '.links-plus-apply-body{margin-top:12px}'
+                . '.links-plus-apply-desc{font-size:13px;color:#6b7280;margin-bottom:12px;line-height:1.6}'
+                . '.links-plus-apply-form{display:grid;gap:8px;position:relative}'
+                . '.links-plus-apply-label{font-size:12px;color:#4b5563;font-weight:600}'
+                . '.links-plus-apply-input{width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,.16);border-radius:10px;padding:9px 10px;background:#fff;color:#111827;font-size:13px}'
+                . '.links-plus-apply-input:focus{outline:none;border-color:rgba(0,97,164,.45);box-shadow:0 0 0 3px rgba(0,97,164,.16)}'
+                . '.links-plus-apply-submit{margin-top:6px;display:flex;align-items:center;justify-content:center;width:100%;border:0;border-radius:999px;padding:13px 28px;background:linear-gradient(135deg,hsl(var(--lp-btn-h1,215),80%,36%),hsl(var(--lp-btn-h2,275),75%,55%));background-size:200% 200%;animation:lp-btn-grad 5s ease infinite;color:#fff;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.3px}'
+                . '.links-plus-apply-submit:hover{opacity:.88}'
+                . '.links-plus-apply-submit:disabled{opacity:.55;cursor:not-allowed}'
+                . '.links-plus-apply-powered{margin:6px 0 0;text-align:center!important;font-size:11px;color:#9ca3af}'
+                . '.links-plus-apply-powered a{color:inherit;text-decoration:none}'
+                . '.links-plus-apply-powered a:hover{text-decoration:underline}'
+                . '.links-plus-apply-hp{position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;overflow:hidden}'
+                . '.links-plus-apply-msg-area,.links-plus-apply-msg{padding:8px 10px;border-radius:10px;font-size:13px;line-height:1.5;margin-bottom:8px}'
+                . '.links-plus-apply-msg-area{display:none}'
+                . '.links-plus-apply-msg-ok{background:#e8f3ff;color:#12416a;border:1px solid rgba(0,97,164,.22)}'
+                . '.links-plus-apply-msg-ok::before{content:"\2713";display:inline-block;margin-right:4px;animation:lp-check .4s cubic-bezier(.34,1.56,.64,1) both}'
+                . '.links-plus-apply-msg-warn{background:#fff8e8;color:#8a5b00;border:1px solid rgba(245,158,11,.28)}'
+                . '.links-plus-apply-msg-err{background:#ffeeee;color:#9b1c1c;border:1px solid rgba(220,38,38,.26)}'
+                . '@keyframes lp-so-pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}'
+                . '.lp-success-overlay{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(255,255,255,.92);border-radius:12px;opacity:0;pointer-events:none;transition:opacity .25s}'
+                . '.lp-success-overlay.is-visible{opacity:1;pointer-events:auto}'
+                . '.lp-success-icon{width:72px;height:72px;border-radius:50%;background:#e8f3ff;display:flex;align-items:center;justify-content:center;animation:lp-so-pop .4s cubic-bezier(.34,1.56,.64,1) both}'
+                . '.lp-success-icon svg{width:36px;height:36px;stroke:#0061a4;fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}'
+                . '.lp-success-label{margin-top:14px;font-size:15px;font-weight:700;color:#12416a}'
+                . '@media (max-width:680px){.links-plus-apply{padding:13px 15px}}'
+                . '.lp-apply-open-btn{display:inline-flex;align-items:center;gap:6px;border:0;border-radius:999px;padding:11px 22px;background:#0061a4;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .15s}'
+                . '.lp-apply-open-btn:hover{opacity:.88}'
+                . '.lp-apply-open-btn--outline{background:transparent!important;border:2px solid #0061a4;color:#0061a4}'
+                . '.lp-apply-open-btn--outline:hover{background:rgba(0,97,164,.06)!important;opacity:1}'
+                . '.lp-apply-open-btn--ghost{background:transparent!important;border:1px solid rgba(0,0,0,.2);color:inherit}'
+                . '.lp-apply-open-btn--ghost:hover{background:rgba(0,0,0,.04)!important;opacity:1}'
+                . '.lp-apply-open-btn--gradient{background:linear-gradient(135deg,hsl(var(--lp-btn-h1,215),80%,36%),hsl(var(--lp-btn-h2,275),75%,55%))!important;background-size:200% 200%!important;animation:lp-btn-grad 5s ease infinite!important}'
+                . '.lp-apply-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}'
+                . '.lp-apply-modal-overlay.is-open{opacity:1;pointer-events:auto}'
+                . '.lp-apply-modal{background:#fff;border-radius:16px;padding:24px;width:440px;max-width:calc(100vw - 32px);max-height:90vh;overflow-y:auto;position:relative;box-shadow:0 8px 32px rgba(0,0,0,.18);transform:translateY(12px);transition:transform .2s}'
+                . '.lp-apply-modal-overlay.is-open .lp-apply-modal{transform:translateY(0)}'
+                . '.lp-apply-modal .links-plus-apply-title{margin-bottom:4px;font-size:17px}'
+                . '.lp-apply-modal-close{position:absolute;top:10px;right:10px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:0;background:none;cursor:pointer;border-radius:50%;font-size:22px;color:#6b7280;line-height:1;padding:0}'
+                . '.lp-apply-modal-close:hover{background:rgba(0,0,0,.08);color:#1f2937}'
+                . sprintf($dm9, '.links-plus-apply')             . '{background:rgba(26,32,44,.96);border-color:rgba(255,255,255,.08)}'
+                . sprintf($dm9, '.links-plus-apply-title')       . '{color:#e2e8f0}'
+                . sprintf($dm9, '.links-plus-apply-chevron')     . '{color:#94a3b8}'
+                . sprintf($dm9, '.links-plus-apply-desc')        . '{color:#94a3b8}'
+                . sprintf($dm9, '.links-plus-apply-label')       . '{color:#94a3b8}'
+                . sprintf($dm9, '.links-plus-apply-input')       . '{background:#111827;border-color:rgba(255,255,255,.12);color:#e2e8f0}'
+                . sprintf($dm9, '.links-plus-apply-input:focus') . '{border-color:rgba(96,165,250,.6);box-shadow:0 0 0 3px rgba(96,165,250,.18)}'
+                . sprintf($dm9, '.links-plus-apply-powered')     . '{color:#64748b}'
+                . sprintf($dm9, '.links-plus-apply-msg-ok')      . '{background:rgba(0,97,164,.14);color:#7dd3fc;border-color:rgba(96,165,250,.3)}'
+                . sprintf($dm9, '.links-plus-apply-msg-warn')    . '{background:rgba(245,158,11,.1);color:#fcd34d;border-color:rgba(245,158,11,.3)}'
+                . sprintf($dm9, '.links-plus-apply-msg-err')     . '{background:rgba(220,38,38,.12);color:#fca5a5;border-color:rgba(220,38,38,.3)}'
+                . sprintf($dm9, '.lp-apply-modal')               . '{background:#1e2433}'
+                . sprintf($dm9, '.lp-apply-modal-close')         . '{color:#94a3b8}'
+                . sprintf($dm9, '.lp-apply-modal-close:hover')   . '{background:rgba(255,255,255,.1);color:#e2e8f0}'
+                . sprintf($dm9, '.lp-success-overlay')            . '{background:rgba(18,24,40,.9)}'
+                . sprintf($dm9, '.lp-success-icon')               . '{background:rgba(0,97,164,.18)}'
+                . sprintf($dm9, '.lp-success-icon svg')           . '{stroke:#7dd3fc}'
+                . sprintf($dm9, '.lp-success-label')              . '{color:#7dd3fc}'
+                . sprintf($lm,  '.links-plus-apply')             . '{background:rgba(255,255,255,.98)!important;border-color:rgba(0,0,0,.08)!important}'
+                . sprintf($lm,  '.links-plus-apply-title')       . '{color:#1f2937!important}'
+                . sprintf($lm,  '.links-plus-apply-desc')        . '{color:#6b7280!important}'
+                . sprintf($lm,  '.links-plus-apply-label')       . '{color:#4b5563!important}'
+                . sprintf($lm,  '.links-plus-apply-input')       . '{background:#fff!important;border-color:rgba(0,0,0,.16)!important;color:#111827!important}'
+                . sprintf($lm,  '.lp-apply-modal')               . '{background:#fff!important}'
+                . '</style>'
+                . '<script id="links-plus-apply-script">'
+                . '(function(){'
+                . '"use strict";'
+                . 'var h=Math.floor(Math.random()*360);'
+                . 'document.documentElement.style.setProperty("--lp-btn-h1",h);'
+                . 'document.documentElement.style.setProperty("--lp-btn-h2",(h+80)%360);'
+                . 'function setupForm(form){'
+                .   'if(form._lpSet)return;form._lpSet=true;'
+                .   'var btn=form.querySelector(".links-plus-apply-submit");'
+                .   'form.addEventListener("submit",function(e){'
+                .     'e.preventDefault();'
+                .     'if(btn){btn.disabled=true;btn.style.opacity="0.55";}'
+                .     'var cleanup=function(){if(btn){btn.disabled=false;btn.style.opacity="";}};'
+                .     'fetch(form.action,{method:"POST",headers:{"X-Requested-With":"XMLHttpRequest"},body:new FormData(form)})'
+                .     '.then(function(r){return r.json();})'
+                .     '.then(function(d){showMsg(form,d.status,d.message);if(d.status==="ok")form.reset();cleanup();})'
+                .     '.catch(function(){showMsg(form,"err","\u63d0\u4ea4\u5931\u8d25\uff1a\u7f51\u7edc\u9519\u8bef\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002");cleanup();});'
+                .   '});'
+                . '}'
+                . 'function showMsg(form,status,message){'
+                .   'if(status==="ok"){'
+                .     'var ov=form.querySelector(".lp-success-overlay");'
+                .     'if(ov){'
+                .       'ov.innerHTML=\'<div class="lp-success-icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><span class="lp-success-label">\u7533\u8bf7\u6210\u529f\uff01</span>\';'
+                .       'ov.classList.add("is-visible");'
+                .       'setTimeout(function(){ov.classList.remove("is-visible");ov.innerHTML="";},2500);'
+                .     '}'
+                .     'return;'
+                .   '}'
+                .   'var a=form.querySelector(".links-plus-apply-msg-area");'
+                .   'if(!a)return;'
+                .   'var t=(status==="rate_limited"||status==="duplicate")?"warn":"err";'
+                .   'a.className="links-plus-apply-msg-area links-plus-apply-msg links-plus-apply-msg-"+t;'
+                .   'a.textContent=message;'
+                .   'a.style.display="block";'
+                . '}'
+                . 'function setupPopups(){'
+                .   'var obs=document.querySelectorAll("[data-lp-popup-open]");'
+                .   'for(var i=0;i<obs.length;i++){(function(b){if(b._lpPop)return;b._lpPop=true;'
+                .     'b.addEventListener("click",function(){var el=document.getElementById(b.getAttribute("data-lp-popup-open"));if(el)el.classList.add("is-open");});'
+                .   '})(obs[i]);}'
+                .   'var ols=document.querySelectorAll(".lp-apply-modal-overlay");'
+                .   'for(var i=0;i<ols.length;i++){(function(ov){if(ov._lpOv)return;ov._lpOv=true;'
+                .     'ov.addEventListener("click",function(e){if(e.target===ov)ov.classList.remove("is-open");});'
+                .   '})(ols[i]);}'
+                .   'var cls=document.querySelectorAll("[data-lp-popup-close]");'
+                .   'for(var i=0;i<cls.length;i++){(function(cl){if(cl._lpCl)return;cl._lpCl=true;'
+                .     'cl.addEventListener("click",function(){var p=cl.closest(".lp-apply-modal-overlay");if(p)p.classList.remove("is-open");});'
+                .   '})(cls[i]);}'
+                .   'if(!document._lpEscSet){document._lpEscSet=true;'
+                .     'document.addEventListener("keydown",function(e){'
+                .       'if(e.key==="Escape"||e.keyCode===27){var op=document.querySelector(".lp-apply-modal-overlay.is-open");if(op)op.classList.remove("is-open");}});}'
+                . '}'
+                . 'function init(){'
+                .   'var forms=document.querySelectorAll("form[data-lp-ajax]");'
+                .   'for(var i=0;i<forms.length;i++)setupForm(forms[i]);'
+                .   'setupPopups();'
+                . '}'
+                . 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",init);}else{init();}'
+                . '})();'
+                . '</script>';
+        }
+
+        $actionEsc     = htmlspecialchars($actionUrl,        ENT_QUOTES, 'UTF-8');
+        $sortEsc       = htmlspecialchars($defaultSort,      ENT_QUOTES, 'UTF-8');
+        $tokenEsc      = htmlspecialchars($applyToken,       ENT_QUOTES, 'UTF-8');
+        $submitTextEsc = htmlspecialchars(_t('提交友链申请'), ENT_QUOTES, 'UTF-8');
+        $titleText     = $customTitle !== ''
+            ? htmlspecialchars($customTitle, ENT_QUOTES, 'UTF-8')
+            : htmlspecialchars(_t('接受友链申请'), ENT_QUOTES, 'UTF-8');
+        $descText      = $customDesc !== ''
+            ? htmlspecialchars($customDesc, ENT_QUOTES, 'UTF-8')
+            : htmlspecialchars(_t('名称 / 地址 / 图片为必填，提交后将进入待审核队列。'), ENT_QUOTES, 'UTF-8');
+
+        $poweredHtml = '<p class="links-plus-apply-powered">Powered by <a href="https://see.lhl.one/typecho-linksplus" target="_blank">Links+</a></p>';
+
+        $chevronSvg = '<svg class="links-plus-apply-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 8 10 13 15 8"/></svg>';
+
+        $innerForm = '<form class="links-plus-apply-form" method="post" action="' . $actionEsc . '" data-lp-ajax="1">'
+            . '<div class="links-plus-apply-msg-area" style="display:none"></div>'
+            . '<input type="hidden" name="do" value="apply-submit" />'
+            . '<input type="hidden" name="apply_token" value="' . $tokenEsc . '" />'
+            . '<input type="hidden" name="sort" value="' . $sortEsc . '" />'
+            . $honeypotHtml
+            . $fieldHtml
+            . '<button class="links-plus-apply-submit" type="submit">' . $submitTextEsc . '</button>'
+            . $poweredHtml
+            . '<div class="lp-success-overlay" role="status"></div>'
+            . '</form>';
+
+        $finalForm = '';
+        if ($isPopup) {
+            static $popupCount = 0;
+            $popupCount++;
+            $modalId  = 'lp-apply-modal-' . $popupCount;
+            $btnEsc   = htmlspecialchars(_t('申请友链'), ENT_QUOTES, 'UTF-8');
+            $closeEsc = htmlspecialchars(_t('关闭'),     ENT_QUOTES, 'UTF-8');
+            $finalForm = '<div' . $themeAttr . '>'
+                . '<button class="' . $popupBtnCls . '" type="button" data-lp-popup-open="' . $modalId . '">' . $btnEsc . '</button>'
+                . '<div class="lp-apply-modal-overlay" id="' . $modalId . '" role="dialog" aria-modal="true" aria-label="' . $titleText . '">'
+                . '<div class="lp-apply-modal">'
+                . '<button class="lp-apply-modal-close" type="button" data-lp-popup-close aria-label="' . $closeEsc . '">&times;</button>'
+                . '<div class="links-plus-apply-title">' . $titleText . '</div>'
+                . '<div class="links-plus-apply-desc">' . $descText . '</div>'
+                . $statusHtml
+                . $innerForm
+                . '</div></div>'
+                . '</div>';
+        } else {
+            $finalForm = '<div' . $themeAttr . '>'
+                . '<details class="links-plus-apply"' . ($defaultOpen ? ' open' : '') . '>'
+                . '<summary class="links-plus-apply-summary">'
+                . '<span class="links-plus-apply-title">' . $titleText . '</span>'
+                . $chevronSvg
+                . '</summary>'
+                . '<div class="links-plus-apply-body">'
+                . '<div class="links-plus-apply-desc">' . $descText . '</div>'
+                . $statusHtml
+                . $innerForm
+                . '</div>'
+                . '</details>'
+                . '</div>';
+        }
+
+        return $assetsBlock . $finalForm;
+    }
+
+    /**
+     * 跨方法传递当前渲染模板名（用于 apply 跟随模式）
+     * 不传参数时返回当前存储的模板名，传入 $tpl 时设置并返回。
+     */
+    private static function activeRenderTplStore($tpl = null)
+    {
+        static $activeTpl = '';
+        if ($tpl !== null) {
+            $activeTpl = (string)$tpl;
+        }
+        return $activeTpl;
+    }
+
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
      * 
@@ -246,9 +916,13 @@ class Links_Plugin implements Typecho_Plugin_Interface
         }
         
     Helper::addAction('links-edit', 'Links_Action');
-        // Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Links_Plugin', 'parse');
-        // Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Links_Plugin', 'parse');
-        // Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Links_Plugin', 'parse');
+    Helper::addAction('links-apply', 'Links_Action');
+        // 注册短代码和标签解析钩子
+        Typecho_Plugin::factory('Widget_Abstract_Contents')->contentEx = array('Links_Plugin', 'parse');
+        Typecho_Plugin::factory('Widget_Abstract_Contents')->excerptEx = array('Links_Plugin', 'parse');
+        Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Links_Plugin', 'parse');
+        Typecho_Plugin::factory('admin/write-post.php')->bottom = array('Links_Plugin', 'renderEditorTool');
+        Typecho_Plugin::factory('admin/write-page.php')->bottom = array('Links_Plugin', 'renderEditorTool');
         // Typecho_Plugin::factory('Widget_Archive')->callLinks = array('Links_Plugin', 'output_str');
         return _t($info);
     }
@@ -264,6 +938,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
     public static function deactivate()
     {
     Helper::removeAction('links-edit');
+    Helper::removeAction('links-apply');
         try {
             $menuIndex = Helper::removeMenu('Links Plus');
             if ($menuIndex !== null) {
@@ -277,6 +952,345 @@ class Links_Plugin implements Typecho_Plugin_Interface
 
         // 兼容旧注册方式
         Helper::removePanel(3, 'Links/manage-links.php');
+        
+        // 移除短代码和标签解析钩子
+        // （注意：Typecho 没有提供直接的 removeHook 方法，这里仅作说明）
+    }
+
+    /**
+     * 是否启用了 AdminBeautify
+     */
+    public static function isAdminBeautifyEnabled()
+    {
+        return class_exists('Typecho_Plugin') && Typecho_Plugin::exists('AdminBeautify');
+    }
+
+    /**
+     * 获取 Links 运行所需的关键钩子
+     *
+     * @return array<string,string>
+     */
+    public static function getRequiredRuntimeHooks()
+    {
+        return array(
+            'Widget_Abstract_Contents:contentEx' => _t('正文解析 contentEx'),
+            'Widget_Abstract_Contents:excerptEx' => _t('摘要解析 excerptEx'),
+            'Widget_Abstract_Comments:contentEx' => _t('评论解析 contentEx'),
+            'admin/write-post.php:bottom' => _t('文章编辑器按钮'),
+            'admin/write-page.php:bottom' => _t('页面编辑器按钮'),
+        );
+    }
+
+    /**
+     * 获取 Links 运行所需的 Action 注册
+     *
+     * @return array<string,string>
+     */
+    public static function getRequiredRuntimeActions()
+    {
+        return array(
+            'links-edit' => _t('后台管理 Action（links-edit）'),
+            'links-apply' => _t('前台申请 Action（links-apply）'),
+        );
+    }
+
+    /**
+     * 检查当前插件是否缺少关键钩子
+     *
+     * @return array<string,array>  key => ['ok'=>bool,'label'=>string] — 仅返回缺失项
+     */
+    public static function getMissingRuntimeHooks()
+    {
+        if (!class_exists('Typecho_Plugin')) {
+            return array();
+        }
+
+        $export = array();
+        try {
+            $export = Typecho_Plugin::export();
+        } catch (Exception $e) {
+        } catch (Throwable $e) {
+        }
+
+        $pluginHandles = array();
+        if (isset($export['activated']['Links']['handles']) && is_array($export['activated']['Links']['handles'])) {
+            $pluginHandles = $export['activated']['Links']['handles'];
+        }
+
+        // 期望的回调类（hookKey => expectedClass）
+        $expectedCallbacks = array(
+            'Widget_Abstract_Contents:contentEx'  => 'Links_Plugin',
+            'Widget_Abstract_Contents:excerptEx'  => 'Links_Plugin',
+            'Widget_Abstract_Comments:contentEx'  => 'Links_Plugin',
+            'admin/write-post.php:bottom'         => 'Links_Plugin',
+            'admin/write-page.php:bottom'         => 'Links_Plugin',
+        );
+
+        $items = array();
+        foreach (self::getRequiredRuntimeHooks() as $handleKey => $label) {
+            $cb = isset($pluginHandles[$handleKey]) ? $pluginHandles[$handleKey] : null;
+            $ok = false;
+            if ($cb !== null && !empty($cb)) {
+                $expectedClass = isset($expectedCallbacks[$handleKey]) ? $expectedCallbacks[$handleKey] : null;
+                if ($expectedClass === null) {
+                    $ok = true;
+                } elseif (is_array($cb) && isset($cb[0]) && $cb[0] === $expectedClass) {
+                    $ok = true;
+                } else {
+                    if (is_array($cb)) {
+                        foreach ($cb as $entry) {
+                            if (is_array($entry) && isset($entry[0]) && $entry[0] === $expectedClass) {
+                                $ok = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!$ok) {
+                $items[$handleKey] = array('ok' => false, 'label' => $label);
+            }
+        }
+
+        // Action 注册检查
+        try {
+            $options = Typecho_Widget::widget('Widget_Options');
+            $actionTable = isset($options->actionTable) && is_array($options->actionTable) ? $options->actionTable : array();
+            foreach (self::getRequiredRuntimeActions() as $actionName => $label) {
+                $ok = !empty($actionTable[$actionName]) && trim((string)$actionTable[$actionName]) === 'Links_Action';
+                if (!$ok) {
+                    $items['action:' . $actionName] = array('ok' => false, 'label' => $label);
+                }
+            }
+        } catch (Exception $e) {
+            foreach (self::getRequiredRuntimeActions() as $actionName => $label) {
+                $items['action:' . $actionName] = array('ok' => false, 'label' => $label . ' (无法读取)');
+            }
+        }
+
+        // 数据库表存在性检查
+        $tableExists = true;
+        $prefix = '';
+        try {
+            $db = Typecho_Db::get();
+            $prefix = $db->getPrefix();
+            try {
+                $result = $db->query('SHOW TABLES LIKE \'' . $prefix . 'links\'');
+                $tableExists = (bool)$db->fetchRow($result);
+            } catch (Exception $e) {
+                // SQLite fallback
+                $result = $db->query('SELECT name FROM sqlite_master WHERE type=\'table\' AND name=\'' . $prefix . 'links\'');
+                $tableExists = (bool)$db->fetchRow($result);
+            }
+        } catch (Exception $e) {
+            $tableExists = true; // 无法判断时不误报
+        }
+        if (!$tableExists) {
+            $items['db:links_table'] = array('ok' => false, 'label' => _t('数据库表（' . $prefix . 'links）'));
+        }
+
+        return $items;
+    }
+
+    /**
+     * 输出“需要重新启用插件”的提示
+     */
+    public static function renderRuntimeHookNotice()
+    {
+        $missing = self::getMissingRuntimeHooks();
+        if (empty($missing)) {
+            return '';
+        }
+
+        $listHtml = '';
+        foreach ($missing as $key => $item) {
+            $listHtml .= '<li style="padding:4px 0;display:flex;align-items:center;gap:6px">'
+                . '<span style="color:#ef4444;font-size:16px;line-height:1">&#10007;</span>'
+                . '<span>' . htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8') . '</span>'
+                . '</li>';
+        }
+
+        $isDbMissing = isset($missing['db:links_table']);
+        $isHookMissing = !$isDbMissing || count($missing) > 1;
+
+        $detail = '';
+        if ($isHookMissing) {
+            $detail .= '<p style="margin:8px 0 4px">运行时钩子/Action 未完整注册，通常在更新插件代码后未重新激活时出现。'
+                . '<strong>请先禁用 Links Plus，再重新启用一次。</strong></p>';
+        }
+        if ($isDbMissing) {
+            $detail .= '<p style="margin:8px 0 4px">数据库表丢失或未创建，可尝试<strong>禁用后重新启用</strong>插件以重建表结构。'
+                . '若已有数据请勿直接重装，联系管理员手动恢复。</p>';
+        }
+
+        return '<div class="md3-card" style="border-color:rgba(239,68,68,.35);background:#fff5f5">'
+            . '<div class="md3-title" style="color:#b91c1c">&#9888; 插件完整性检查失败</div>'
+            . '<div class="md3-body">'
+            . '<ul style="margin:0;padding:0 0 0 4px;list-style:none">' . $listHtml . '</ul>'
+            . $detail
+            . '</div></div>';
+    }
+
+    /**
+     * 写作页工具栏按钮：插入 [LinksPlus /]
+     */
+    public static function renderEditorTool()
+    {
+        $isAdminBeautify = self::isAdminBeautifyEnabled();
+        $buttonInner = $isAdminBeautify
+            ? '<i class="material-icons-round" aria-hidden="true">groups</i>'
+            : '<svg t="1779027635144" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="8208" width="18" height="18" aria-hidden="true"><path d="M518.966571 653.825634l0-6.70855c89.791366-64.161263 89.447337-175.282379 89.275323-265.589787l0-13.589115c0-130.730724-78.782463-208.653116-210.717285-208.653116l-6.70855 0c-126.602385 0-196.2681 74.138082-196.2681 208.653116 0 67.945574 0 205.728876 103.552495 279.178901l0 5.332437c-120.065849 17.029397-232.735092 66.225433-232.735092 144.663867 0 109.056946 107.680833 162.037292 329.062993 162.037292 283.30724 0 342.824122-88.071225 342.824122-162.037292C737.252478 713.170502 598.437091 669.13489 518.966571 653.825634z" fill="#444" p-id="8209"></path><path d="M929.564253 767.698975c-17.545439 0-31.82261-14.277171-31.994625-31.82261-0.344028-23.393919-101.660339-88.415253-197.300185-99.768184-16.169326-1.892155-28.210314-15.653284-28.210314-31.82261l0-66.225433c0-9.804804 4.472367-18.921552 12.040988-24.942046 54.012431-43.175542 94.951789-137.26726 94.951789-218.801949 0-109.917017-74.310096-132.966907-136.579204-132.966907-17.717453 0-31.994625-14.277171-31.994625-31.994625s14.277171-31.994625 31.994625-31.994625c123.678145 0 200.568453 75.514195 200.568453 197.128171 0 94.779775-44.207626 200.396439-106.992777 258.365194l0 24.598018c91.855535 19.609609 225.682513 83.942886 225.682513 158.59701 0 17.545439-14.277171 31.650596-31.82261 31.82261C929.736267 767.698975 929.736267 767.698975 929.564253 767.698975z" fill="#444" p-id="8210"></path></svg>';
+        $shortcode = '[LinksPlus /]';
+?>
+<script>
+(function () {
+    var shortcode = <?php echo json_encode($shortcode); ?>;
+    var buttonHtml = <?php echo json_encode($buttonInner); ?>;
+
+    function parseLeft(value) {
+        var num = parseInt(value, 10);
+        return isNaN(num) ? null : num;
+    }
+
+    function insertAtCursor(textarea, value) {
+        var text = window.jQuery(textarea);
+        if (text.length && typeof text.replaceSelection === 'function') {
+            var sel = text.getSelection();
+            var offset = (sel ? sel.start : 0) + value.length;
+            text.replaceSelection(value);
+            text.setSelection(offset, offset);
+            return;
+        }
+
+        var start = textarea.selectionStart || 0;
+        var end = textarea.selectionEnd || 0;
+        var oldValue = textarea.value || '';
+        textarea.value = oldValue.slice(0, start) + value + oldValue.slice(end);
+        textarea.focus();
+        textarea.selectionStart = textarea.selectionEnd = start + value.length;
+    }
+
+    function bindInsert(trigger) {
+        trigger.addEventListener('click', function (event) {
+            event.preventDefault();
+            var textarea = document.getElementById('text');
+            if (!textarea) {
+                return;
+            }
+            insertAtCursor(textarea, shortcode);
+        });
+    }
+
+    function getLastButtonLeft(row) {
+        var buttons = row.querySelectorAll('.wmd-button');
+        var maxLeft = 0;
+        for (var i = 0; i < buttons.length; i++) {
+            var left = parseLeft(buttons[i].style.left);
+            if (left !== null && left > maxLeft) {
+                maxLeft = left;
+            }
+        }
+        return maxLeft;
+    }
+
+    function ensureButton() {
+        if (document.getElementById('wmd-mirages-linksplus-button') || document.getElementById('linksplus-shortcode-button')) {
+            return;
+        }
+
+        var row = document.getElementById('wmd-button-row');
+        if (row) {
+            var li = document.createElement('li');
+            li.className = 'wmd-button';
+            li.id = 'wmd-mirages-linksplus-button';
+            li.title = '插入 LinksPlus 短代码';
+            li.setAttribute('aria-label', '插入 LinksPlus 短代码');
+            li.style.left = (getLastButtonLeft(row) + 25) + 'px';
+            li.innerHTML = buttonHtml;
+            row.appendChild(li);
+            bindInsert(li);
+            return;
+        }
+
+        var slug = document.querySelector('.url-slug');
+        if (slug && slug.parentNode) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.id = 'linksplus-shortcode-button';
+            btn.className = 'btn btn-xs';
+            btn.innerHTML = '<span class="linksplus-editor-icon">' + buttonHtml + '</span><span class="linksplus-editor-label">LinksPlus</span>';
+            btn.style.marginRight = '5px';
+            slug.parentNode.insertBefore(btn, slug.nextSibling);
+            bindInsert(btn);
+        }
+    }
+
+    function ensureStyle() {
+        if (document.getElementById('linksplus-editor-tool-style')) {
+            return;
+        }
+        var style = document.createElement('style');
+        style.id = 'linksplus-editor-tool-style';
+        
+        var mdRadiusVar = '';
+        try {
+            mdRadiusVar = window.getComputedStyle(document.documentElement).getPropertyValue('--md-radius-full').trim();
+        } catch (e) {
+            mdRadiusVar = '';
+        }
+        var hasAdminBeautify = document.body.classList.contains('ab-write-page') ||
+                               !!document.querySelector('.ab-inner-pill') ||
+                               !!mdRadiusVar;
+        
+        var styleText = '' +
+            '#wmd-mirages-linksplus-button svg{display:block!important;width:18px!important;height:18px!important}' +
+            '#wmd-mirages-linksplus-button .material-icons-round{font-size:18px!important;line-height:18px!important}' +
+            '#linksplus-shortcode-button{display:inline-flex!important;align-items:center!important;gap:4px!important}' +
+            '#linksplus-shortcode-button .linksplus-editor-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:18px!important;height:18px!important}' +
+            '#linksplus-shortcode-button .linksplus-editor-icon svg{display:block!important;width:18px!important;height:18px!important}' +
+            '#linksplus-shortcode-button .material-icons-round{font-size:18px!important;line-height:18px!important;color:inherit!important}' +
+            '#linksplus-shortcode-button .linksplus-editor-label{line-height:1!important}';
+        
+        if (hasAdminBeautify) {
+            styleText += '' +
+                'body.ab-write-page #wmd-mirages-linksplus-button,.ab-inner-pill #wmd-mirages-linksplus-button{color:var(--md-on-surface-variant)!important}' +
+                'body.ab-write-page #wmd-mirages-linksplus-button:hover,.ab-inner-pill #wmd-mirages-linksplus-button:hover{background:color-mix(in srgb,var(--md-on-surface-variant) 8%,transparent)!important;color:var(--md-on-surface)!important}' +
+                'body.ab-write-page #wmd-mirages-linksplus-button:active,.ab-inner-pill #wmd-mirages-linksplus-button:active{background:color-mix(in srgb,var(--md-on-surface-variant) 16%,transparent)!important}' +
+                'body.ab-write-page #wmd-mirages-linksplus-button svg path,.ab-inner-pill #wmd-mirages-linksplus-button svg path{fill:currentColor!important}' +
+                'body.ab-write-page #wmd-mirages-linksplus-button:hover svg path,.ab-inner-pill #wmd-mirages-linksplus-button:hover svg path{fill:currentColor!important}' +
+                '.ab-inner-pill #wmd-mirages-linksplus-button{border-radius:var(--md-radius-full)!important;color:var(--md-on-surface-variant)!important}' +
+                '.ab-inner-pill #wmd-mirages-linksplus-button:hover{background:color-mix(in srgb,var(--md-on-surface-variant) 8%,transparent)!important;color:var(--md-on-surface)!important}' +
+                '.ab-inner-pill #wmd-mirages-linksplus-button:active{background:color-mix(in srgb,var(--md-on-surface-variant) 16%,transparent)!important}' +
+                '.ab-inner-pill #wmd-mirages-linksplus-button svg path{fill:currentColor!important}' +
+                '.ab-inner-pill #wmd-mirages-linksplus-button:hover svg path{fill:currentColor!important}';
+        } else {
+            styleText += '' +
+                '#wmd-mirages-linksplus-button{display:inline-block!important;margin-right:4px!important;padding:3px!important;cursor:pointer!important;vertical-align:middle!important;border-radius:2px!important}' +
+                '#wmd-mirages-linksplus-button:hover{background-color:#E9E9E6!important}' +
+                '#wmd-mirages-linksplus-button svg path{fill:#444!important}' +
+                '#wmd-mirages-linksplus-button:hover svg path{fill:#555!important}' +
+                '#wmd-mirages-linksplus-button .material-icons-round{color:#444!important}' +
+                '#wmd-mirages-linksplus-button:hover .material-icons-round{color:#555!important}';
+        }
+        
+        style.textContent = styleText;
+        document.head.appendChild(style);
+    }
+
+    function init() {
+        ensureStyle();
+        ensureButton();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+    document.addEventListener('ab:pageload', init);
+})();
+</script>
+<?php
     }
 
     /**
@@ -349,6 +1363,29 @@ class Links_Plugin implements Typecho_Plugin_Interface
     margin-top: 16px;
     flex-wrap: wrap;
 }
+.lp-rewrite-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+.lp-rewrite-actions .md3-btn-text {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+@media (max-width: 640px) {
+    .lp-rewrite-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    .lp-rewrite-actions .md3-btn-text {
+        width: 100%;
+        box-sizing: border-box;
+        text-align: center;
+    }
+}
 .md3-btn-text {
     color: var(--md-primary);
     text-decoration: none;
@@ -362,6 +1399,56 @@ class Links_Plugin implements Typecho_Plugin_Interface
     opacity: 0.9;
     color: var(--md-primary);
     text-decoration: none;
+}
+/* 同步模板弹窗按钮：AdminBeautify 适配 */
+.lp-md3-overlay .md3-btn-text {
+    border: 1px solid rgba(0,97,164,.18);
+    border-radius: 999px;
+    background-color: #dbeafe;
+    color: #0b3c68;
+    transition: background-color .2s, color .2s, border-color .2s, box-shadow .2s;
+}
+.lp-md3-overlay .md3-btn-text:hover {
+    background-color: #cfe3ff;
+    color: #072f55;
+    border-color: rgba(0,97,164,.28);
+}
+.lp-md3-overlay .md3-btn-text:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0,97,164,.18);
+}
+.lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"] {
+    border-color: transparent;
+    background-color: var(--md-primary) !important;
+    color: var(--md-on-primary) !important;
+}
+
+[data-theme="dark"] .lp-md3-overlay .md3-btn-text,
+body.dark .lp-md3-overlay .md3-btn-text,
+body.dark-mode .lp-md3-overlay .md3-btn-text,
+html.dark .lp-md3-overlay .md3-btn-text,
+html.dark-mode .lp-md3-overlay .md3-btn-text {
+    background-color: #283a52;
+    border-color: rgba(180,210,255,.28);
+    color: #d7e8ff;
+}
+[data-theme="dark"] .lp-md3-overlay .md3-btn-text:hover,
+body.dark .lp-md3-overlay .md3-btn-text:hover,
+body.dark-mode .lp-md3-overlay .md3-btn-text:hover,
+html.dark .lp-md3-overlay .md3-btn-text:hover,
+html.dark-mode .lp-md3-overlay .md3-btn-text:hover {
+    background-color: #324a67;
+    border-color: rgba(180,210,255,.38);
+    color: #eef5ff;
+}
+[data-theme="dark"] .lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"],
+body.dark .lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"],
+body.dark-mode .lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"],
+html.dark .lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"],
+html.dark-mode .lp-md3-overlay .md3-btn-text[style*="var(--md-primary)"] {
+    background-color: #0f4a7f !important;
+    color: #eaf3ff !important;
+    border-color: transparent;
 }
 .lp-update-note {
     margin-top: 14px;
@@ -453,14 +1540,223 @@ textarea:focus, input[type="text"]:focus, select:focus {
 .description {
     color: #6b7280;
 }
+.md3-fold-card {
+    padding: 0;
+    overflow: hidden;
+}
+.md3-fold {
+    display: block;
+}
+.md3-fold > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    user-select: none;
+}
+.md3-fold > summary::-webkit-details-marker {
+    display: none;
+}
+.md3-fold-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--md-on-primary-container);
+    padding-left: 12px;
+    border-left: 4px solid var(--md-primary);
+    line-height: 1.2;
+}
+.md3-fold-hint {
+    color: #6b7280;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.md3-fold-body {
+    padding: 16px 20px 16px;
+    border-top: 1px solid var(--md-outline-variant);
+}
+.md3-fold-body > .typecho-option,
+.md3-fold-body > .md3-card {
+    margin-bottom: 14px;
+}
+.md3-fold-body > .typecho-option:last-child,
+.md3-fold-body > .md3-card:last-child {
+    margin-bottom: 0;
+}
+
+/* AdminBeautify / 通用暗色模式适配 */
+[data-theme="dark"] .md3-wrap,
+body.dark .md3-wrap,
+body.dark-mode .md3-wrap,
+html.dark .md3-wrap,
+html.dark-mode .md3-wrap {
+    --md-surface: #1f232b;
+    --md-surface-variant: #2a2f3a;
+    --md-surface-container: #242934;
+    --md-outline-variant: rgba(255,255,255,.12);
+}
+
+[data-theme="dark"] .md3-card,
+body.dark .md3-card,
+body.dark-mode .md3-card,
+html.dark .md3-card,
+html.dark-mode .md3-card {
+    background: #1f232b;
+    border-color: rgba(255,255,255,.12);
+    box-shadow: 0 1px 2px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.35);
+}
+
+[data-theme="dark"] .md3-title,
+[data-theme="dark"] .md3-fold-title,
+body.dark .md3-title,
+body.dark .md3-fold-title,
+body.dark-mode .md3-title,
+body.dark-mode .md3-fold-title,
+html.dark .md3-title,
+html.dark .md3-fold-title,
+html.dark-mode .md3-title,
+html.dark-mode .md3-fold-title {
+    color: #dbe8ff;
+}
+
+[data-theme="dark"] .md3-body,
+[data-theme="dark"] .description,
+[data-theme="dark"] .md3-fold-hint,
+body.dark .md3-body,
+body.dark .description,
+body.dark .md3-fold-hint,
+body.dark-mode .md3-body,
+body.dark-mode .description,
+body.dark-mode .md3-fold-hint,
+html.dark .md3-body,
+html.dark .description,
+html.dark .md3-fold-hint,
+html.dark-mode .md3-body,
+html.dark-mode .description,
+html.dark-mode .md3-fold-hint {
+    color: #b8c0cf;
+}
+
+[data-theme="dark"] .md3-table th,
+body.dark .md3-table th,
+body.dark-mode .md3-table th,
+html.dark .md3-table th,
+html.dark-mode .md3-table th {
+    background-color: #2a2f3a !important;
+    color: #d7deea !important;
+    border-bottom-color: rgba(255,255,255,.12) !important;
+}
+
+[data-theme="dark"] .md3-table td,
+body.dark .md3-table td,
+body.dark-mode .md3-table td,
+html.dark .md3-table td,
+html.dark-mode .md3-table td {
+    color: #c5cedd;
+    border-bottom-color: rgba(255,255,255,.08);
+}
+
+[data-theme="dark"] .field-tag,
+body.dark .field-tag,
+body.dark-mode .field-tag,
+html.dark .field-tag,
+html.dark-mode .field-tag {
+    background: #323a48;
+    color: #ffb4d0;
+}
+
+[data-theme="dark"] .md3-chip,
+body.dark .md3-chip,
+body.dark-mode .md3-chip,
+html.dark .md3-chip,
+html.dark-mode .md3-chip {
+    background: #2a2f3a;
+    border-color: rgba(255,255,255,.14);
+    color: #dbe3f0;
+}
+
+[data-theme="dark"] textarea,
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] select,
+body.dark textarea,
+body.dark input[type="text"],
+body.dark select,
+body.dark-mode textarea,
+body.dark-mode input[type="text"],
+body.dark-mode select,
+html.dark textarea,
+html.dark input[type="text"],
+html.dark select,
+html.dark-mode textarea,
+html.dark-mode input[type="text"],
+html.dark-mode select {
+    background: #171b22;
+    color: #dde5f3;
+    border-color: rgba(255,255,255,.16);
+}
+
+[data-theme="dark"] textarea:focus,
+[data-theme="dark"] input[type="text"]:focus,
+[data-theme="dark"] select:focus,
+body.dark textarea:focus,
+body.dark input[type="text"]:focus,
+body.dark select:focus,
+body.dark-mode textarea:focus,
+body.dark-mode input[type="text"]:focus,
+body.dark-mode select:focus,
+html.dark textarea:focus,
+html.dark input[type="text"]:focus,
+html.dark select:focus,
+html.dark-mode textarea:focus,
+html.dark-mode input[type="text"]:focus,
+html.dark-mode select:focus {
+    border-color: rgba(144,202,249,.6);
+    box-shadow: 0 0 0 3px rgba(144,202,249,.22);
+}
+
+[data-theme="dark"] .typecho-option,
+body.dark .typecho-option,
+body.dark-mode .typecho-option,
+html.dark .typecho-option,
+html.dark-mode .typecho-option {
+    border-bottom-color: rgba(255,255,255,.09);
+}
+
+[data-theme="dark"] .typecho-option label,
+body.dark .typecho-option label,
+body.dark-mode .typecho-option label,
+html.dark .typecho-option label,
+html.dark-mode .typecho-option label {
+    color: #e4ebf7;
+}
+
+[data-theme="dark"] .md3-btn-text,
+body.dark .md3-btn-text,
+body.dark-mode .md3-btn-text,
+html.dark .md3-btn-text,
+html.dark-mode .md3-btn-text {
+    background-color: #234261;
+    color: #d8e9ff;
+}
+
+[data-theme="dark"] .md3-fold-body,
+body.dark .md3-fold-body,
+body.dark-mode .md3-fold-body,
+html.dark .md3-fold-body,
+html.dark-mode .md3-fold-body {
+    border-top-color: rgba(255,255,255,.1);
+}
     </style>
 '
+. self::renderRuntimeHookNotice()
 . <<<LINKS_PLUS_UPDATE_JS
 <script>
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.3.3";
+    var CURRENT = "v1.4.0";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
@@ -626,10 +1922,10 @@ LINKS_PLUS_UPDATE_JS
 <div class="md3-wrap">
 
 <div class="md3-card">
-    <div class="md3-title">友情链接插件 (Links Plus)</div>
+    <div class="md3-title">友情链接插件 (Links+)</div>
     <div class="md3-body">
         <p>欢迎使用 Links Plus 增强版。您可以在“管理”菜单下找到“友情链接”进行日常操作。</p>
-        <p>本插件支持多种输出模式（文字、图片、图文混合），并支持自定义字段扩展。</p>
+        <p>本插件支持多种输出模式（文字、图片、图文混合、HTML输出），并支持自定义字段扩展。</p>
     </div>
     <div class="lp-update-out"></div>
     <div class="md3-header-actions">
@@ -680,6 +1976,21 @@ LINKS_PLUS_UPDATE_JS
                 $tplOptions[$name] = $title;
             }
         }
+
+        // 短代码模板选项（不包含"沿用"选项，必须选择实际模板）
+        $tplOptionsShortcode = array();
+        if (!empty($templates)) {
+            foreach ($templates as $name => $manifest) {
+                $title = isset($manifest['title']) ? (string)$manifest['title'] : $name;
+                $tplOptionsShortcode[$name] = $title;
+            }
+        }
+
+        // 友链申请模块模板选项
+        $tplOptionsApply = array(
+            ''          => _t('内置表单'),
+            '__popup__' => _t('弹窗'),
+        );
 
         $selectedText = new Typecho_Widget_Helper_Form_Element_Select(
             'template_text',
@@ -751,7 +2062,6 @@ LINKS_PLUS_UPDATE_JS
         $dsize->input->setAttribute('class', 'w-10');
         $form->addInput($dsize->addRule('isInteger', _t('请填写整数数字')));
         
-        
 
         $temHelp = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
         $temHelp->html(
@@ -761,9 +2071,11 @@ LINKS_PLUS_UPDATE_JS
         <p>固定占位符：<span class="md3-chip" style="font-weight:bold;">' . self::REWRITE_PLACEHOLDER . '</span></p>
     <span class="md3-chip">建议</span>
         <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span><br><br>
-    <a id="links-plus-get-templates" href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text">同步Github主题</a>
+    <div class="lp-rewrite-actions">
+    <a id="links-plus-get-templates" href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text links-plus-get-templates-btn">同步Github主题</a>
     <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98" target="_blank" class="md3-btn-text">查看全部主题</a>
     <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3" target="_blank" class="md3-btn-text">主题开发文档</a>
+    </div>
     
     <div class="lp-update-out" style="margin-top:12px"></div>
         </div>'
@@ -774,8 +2086,8 @@ LINKS_PLUS_UPDATE_JS
                 $script = <<<'SCRIPT'
         <script>
         document.addEventListener('DOMContentLoaded', function(){
-            var btn = document.getElementById('links-plus-get-templates');
-            if(!btn) return;
+            var btns = document.querySelectorAll('.links-plus-get-templates-btn');
+            if(!btns || !btns.length) return;
 
             function createDialog(title, body, okText, cancelText) {
                 // 遮罩
@@ -841,25 +2153,29 @@ LINKS_PLUS_UPDATE_JS
                 return overlay;
             }
 
-            btn.addEventListener('click', function(e){
-                e.preventDefault();
-                // 构造 MD3 风格对话
-                var dialog = createDialog('同步模板', '<p>将从 GitHub 下载，此操作将用 GitHub 上的模板覆盖本地模板（仅当远端版本较新时会覆盖）。是否继续？</p>', '开始同步', '取消');
+            for (var i = 0; i < btns.length; i++) {
+                (function(btn){
+                    btn.addEventListener('click', function(e){
+                        e.preventDefault();
+                        // 构造 MD3 风格对话
+                        var dialog = createDialog('同步模板', '<p>将从 GitHub 下载，此操作将用 GitHub 上的模板覆盖本地模板（仅当远端版本较新时会覆盖）。是否继续？</p>', '开始同步', '取消');
 
-                dialog._onconfirm = function(){
-                    var host = btn.closest ? btn.closest('.md3-card') : null;
-                    var out = host ? host.querySelector('.lp-update-out') : null;
-                    if(out){ out.innerHTML = '<div class="lp-update-note is-working"><div class="lp-update-title">更新中</div><div class="lp-update-body">正在从 GitHub 下载并更新模板，页面将跳转，请稍候…</div></div>'; }
-                    try{ btn.setAttribute('aria-disabled','true'); btn.classList.add('is-disabled'); }catch(e){}
-                    // 导航到 action 链接，服务器端处理下载/解压/覆盖逻辑
-                    window.location.href = btn.getAttribute('href');
-                };
+                        dialog._onconfirm = function(){
+                            var host = btn.closest ? btn.closest('.md3-card') : null;
+                            var out = host ? host.querySelector('.lp-update-out') : null;
+                            if(out){ out.innerHTML = '<div class="lp-update-note is-working"><div class="lp-update-title">更新中</div><div class="lp-update-body">正在从 GitHub 下载并更新模板，页面将跳转，请稍候…</div></div>'; }
+                            try{ btn.setAttribute('aria-disabled','true'); btn.classList.add('is-disabled'); }catch(e){}
+                            // 导航到 action 链接，服务器端处理下载/解压/覆盖逻辑
+                            window.location.href = btn.getAttribute('href');
+                        };
 
-                document.body.appendChild(dialog);
-                // 聚焦到确认按钮以便无障碍
-                var focusable = dialog.querySelectorAll('.md3-header-actions a');
-                if (focusable && focusable[1]) focusable[1].focus();
-            }, false);
+                        document.body.appendChild(dialog);
+                        // 聚焦到确认按钮以便无障碍
+                        var focusable = dialog.querySelectorAll('.md3-header-actions a');
+                        if (focusable && focusable[1]) focusable[1].focus();
+                    }, false);
+                })(btns[i]);
+            }
         });
         </script>
         SCRIPT;
@@ -898,63 +2214,201 @@ LINKS_PLUS_UPDATE_JS
         );
         $form->addInput($rewritePattern);
 
-        // 预览：显示所选重写模板的缩略图（templates/<name>/image.png）如果存在
+        // 预览：使用测试友链渲染所选模板的真实 HTML 输出
         $optionsObj = Typecho_Widget::widget('Widget_Options');
-        $nopic_url = Typecho_Common::url('usr/plugins/Links/nopic.png', $optionsObj->siteUrl);
         $tplBaseUrl = Typecho_Common::url('usr/plugins/Links/templates/', $optionsObj->siteUrl);
 
         $tplPreview = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
         $tplPreview->html(
             '<div class="md3-title">重写主题预览</div>' .
             '<div class="md3-body">' .
-            '<div style="display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:8px;">' .
-            '<img id="rewrite-tpl-preview-img" src="' . $nopic_url . '" alt="模板预览" style="width:100%;max-width:480px;height:auto;object-fit:contain;border-radius:8px;" />' .
-            '</div>' .
-            '<div id="rewrite-tpl-preview-title" style="font-size:13px;color:#555;margin-top:4px;text-align:center"></div>' .
+            '<div id="rewrite-tpl-preview-html" style="min-height:160px;border-radius:8px;padding:12px;overflow:auto;"></div>' .
+            '<div id="rewrite-tpl-preview-title" style="font-size:13px;color:#555;margin-top:8px;text-align:center"></div>' .
             '</div>'
         );
         $form->addItem($tplPreview);
 
-        // 前端脚本：根据选择更新预览图
+        // 前端脚本：根据选择渲染测试友链的真实 HTML 预览
         $previewScript = <<<'SCRIPT'
 <script>
 document.addEventListener('DOMContentLoaded', function(){
     var sel = document.querySelector('select[name="rewrite_pattern"]');
-    var img = document.getElementById('rewrite-tpl-preview-img');
+    var host = document.getElementById('rewrite-tpl-preview-html');
     var title = document.getElementById('rewrite-tpl-preview-title');
-    if(!sel || !img || !title) return;
+    if(!sel || !host || !title) return;
     var base = '%s';
-    var nopic = '%s';
+
+    var demoLinks = [
+        {
+            lid: '1',
+            name: "LHL's Blog",
+            title: '博客',
+            description: '作者博客',
+            sort: '博客',
+            url: 'https://blog.lhl.one',
+            image: 'https://smms-vip3.see.you/2025/04/18/KXpf8u5SQYNPkA3.jpg',
+            user: ''
+        },
+        {
+            lid: '2',
+            name: "LHL's Shop",
+            title: '图床',
+            description: '聚合图床',
+            sort: '图床',
+            url: 'https://img.lhl.one',
+            image: 'https://smms-vip3.see.you/2026/01/27/ctiYDAXyxkRGbmB.png',
+            user: ''
+        }
+    ];
+
+    function esc(v){
+        return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function requestText(url, cb){
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.onreadystatechange = function(){
+            if(xhr.readyState !== 4) return;
+            if(xhr.status >= 200 && xhr.status < 300){
+                cb(null, xhr.responseText || '');
+            } else {
+                cb(new Error('HTTP ' + xhr.status));
+            }
+        };
+        xhr.send(null);
+    }
+
+    function applyTemplate(tpl, item){
+        var out = tpl;
+        var map = {
+            lid: item.lid,
+            name: esc(item.name),
+            url: esc(item.url),
+            sort: esc(item.sort),
+            title: esc(item.title),
+            description: esc(item.description),
+            image: esc(item.image),
+            user: esc(item.user),
+            size: '120'
+        };
+        for(var k in map){
+            if(Object.prototype.hasOwnProperty.call(map, k)){
+                out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), map[k]);
+            }
+        }
+        return out;
+    }
+
+    function wrapHtml(itemsHtml, manifestText){
+        try {
+            var manifest = JSON.parse(manifestText || '{}');
+            var wrapper = manifest && manifest.wrapper ? manifest.wrapper : null;
+            if(!wrapper || !wrapper.tag) return itemsHtml;
+            var tag = String(wrapper.tag).toLowerCase();
+            if(['ul','ol','div'].indexOf(tag) === -1) return itemsHtml;
+            var el = document.createElement(tag);
+            if(wrapper.class) el.className = String(wrapper.class);
+            if(wrapper.id) el.id = String(wrapper.id);
+            if(wrapper.attrs && typeof wrapper.attrs === 'object'){
+                for(var key in wrapper.attrs){
+                    if(Object.prototype.hasOwnProperty.call(wrapper.attrs, key)){
+                        el.setAttribute(key, String(wrapper.attrs[key]));
+                    }
+                }
+            }
+            el.innerHTML = itemsHtml;
+            return el.outerHTML;
+        } catch (e) {
+            return itemsHtml;
+        }
+    }
+
+    function injectPreviewCss(name, cssText){
+        var styleId = 'lp-rewrite-preview-style';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        if(!cssText) return;
+        var el = document.createElement('style');
+        el.id = styleId;
+        el.textContent = cssText;
+        document.head.appendChild(el);
+    }
+
+    function injectPreviewJs(scriptId, jsText){
+        var old = document.getElementById(scriptId);
+        if(old) old.parentNode.removeChild(old);
+        if(!jsText) return;
+        var el = document.createElement('script');
+        el.id = scriptId;
+        el.textContent = jsText;
+        document.body.appendChild(el);
+    }
+
+    function renderTemplate(name){
+        var styleId  = 'lp-rewrite-preview-style';
+        var scriptId = 'lp-rewrite-preview-script';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        var oldScript = document.getElementById(scriptId);
+        if(oldScript) oldScript.parentNode.removeChild(oldScript);
+
+        requestText(base + name + '/template.html', function(err, tpl){
+            if(err || !tpl || !tpl.trim()){
+                host.innerHTML = '<div style="color:#b91c1c;">模板读取失败，无法预览。</div>';
+                title.textContent = '';
+                return;
+            }
+
+            var html = '';
+            for(var i = 0; i < demoLinks.length; i++){
+                html += applyTemplate(tpl, demoLinks[i]);
+            }
+
+            requestText(base + name + '/manifest.json', function(manifestErr, manifestText){
+                var manifest = null;
+                try { manifest = JSON.parse(manifestText || '{}'); } catch(e) {}
+                var wrapped = (manifestErr || !manifest) ? html : wrapHtml(html, manifestText);
+                host.innerHTML = wrapped;
+                title.textContent = '';
+                if(manifest && manifest.inject && manifest.inject.css){
+                    requestText(base + name + '/style.css?t=' + Date.now(), function(cssErr, cssText){
+                        if(!cssErr && cssText) injectPreviewCss(name, cssText);
+                    });
+                }
+                if(manifest && manifest.inject && manifest.inject.js){
+                    requestText(base + name + '/script.js?t=' + Date.now(), function(jsErr, jsText){
+                        if(!jsErr && jsText) injectPreviewJs(scriptId, jsText);
+                    });
+                }
+            });
+        });
+    }
 
     function update(){
         var v = sel.value || '';
         if(v.indexOf('TPL:') === 0){
-            var name = v.substring(4);
-            var imgUrl = base + name + '/image.png';
-            var tester = new Image();
-            tester.onload = function(){
-                img.src = imgUrl;
-                title.textContent = '';
-            };
-            tester.onerror = function(){
-                img.src = nopic;
-                title.textContent = '暂无预览';
-            };
-            tester.src = imgUrl;
+            renderTemplate(v.substring(4));
         } else {
-            img.src = nopic;
-            title.textContent = '暂无预览';
+            var styleId = 'lp-rewrite-preview-style';
+            var old = document.getElementById(styleId);
+            if(old) old.parentNode.removeChild(old);
+            host.innerHTML = '<div style="color:#6b7280;">暂无预览（请选择文件模板）。</div>';
+            title.textContent = '';
         }
     }
 
     sel.addEventListener('change', update);
-    // 初始化
     update();
 });
 </script>
 SCRIPT;
-        // 填充 base 与 nopic
-        $previewScript = sprintf($previewScript, $tplBaseUrl, $nopic_url);
+        $previewScript = sprintf($previewScript, $tplBaseUrl);
         echo $previewScript;
         
         $rewriteNum = new Typecho_Widget_Helper_Form_Element_Text(
@@ -966,17 +2420,6 @@ SCRIPT;
         );
         $rewriteNum->input->setAttribute('class', 'w-10');
         $form->addInput($rewriteNum->addRule('isInteger', _t('请填写整数数字')));
-
-        // 开发中，小子别看了，一起开发提PR吧
-        // 是否启用短代码 [links_plus]
-        // $enableShortcode = new Typecho_Widget_Helper_Form_Element_Checkbox(
-        //     'enable_shortcodes',
-        //     array('links_plus' => _t('启用短代码 [links_plus]（前端调用，免重写）')),
-        //     array(),
-        //     _t('短代码支持'),
-        //     _t('开启后，文章正文中使用 [links_plus] 将被动态替换为友链 HTML（不写回正文）。')
-        // );
-        // $form->addInput($enableShortcode);
         
         $rewriteSort = new Typecho_Widget_Helper_Form_Element_Text(
             'rewrite_sort',
@@ -1009,6 +2452,794 @@ SCRIPT;
             _t('有些主题/渲染器不支持直接输出 HTML，需要用 “!!!” 包裹整段 HTML 才会被当作原始 HTML 渲染。')
         );
         $form->addInput($rewriteWrapBang);
+        
+        // ========== 短代码配置卡片（放在正文重写下方） ==========
+        $shortcodeCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $shortcodeCard->html(
+            '<div class="md3-title">短代码支持</div>
+            <div class="md3-body">
+                <p>启用后，可在文章、页面、评论中使用 <span class="md3-chip" style="font-weight:bold;">[LinksPlus /]</span> 或 <span class="md3-chip" style="font-weight:bold;">[LinksPlus/]</span> 输出友链。</p>
+                <p><span class="md3-chip">提示</span> <span style="margin-left:8px">短代码支持参数：<code>num</code>、<code>sort</code></span></p>
+                <p><span class="md3-chip">建议</span> <span style="margin-left:8px">优先使用文件模板（<code>templates/</code>）来管理输出结构；旧版“源码规则”保留兼容。</span></p>
+                <div class="lp-rewrite-actions">
+                    <a href="' . Helper::security()->getIndex('/action/links-edit?do=update_templates') . '" class="md3-btn-text links-plus-get-templates-btn">同步Github主题</a>
+                    <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98" target="_blank" class="md3-btn-text">查看全部主题</a>
+                    <a href="https://blog.lhl.one/artical/902.html#%E4%B8%BB%E9%A2%98%E5%BC%80%E5%8F%91%E6%96%87%E6%A1%A3" target="_blank" class="md3-btn-text">主题开发文档</a>
+                </div>
+                <div class="lp-update-out" style="margin-top:12px"></div>
+            </div>'
+        );
+        $form->addItem($shortcodeCard);
+
+        // 短代码参数说明表格
+        $shortcodeParamsCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $shortcodeParamsCard->html(
+            '<div class="md3-title">短代码参数说明</div>' .
+            '<div class="md3-body">' .
+            '<table class="md3-table" style="width:100%;border-collapse:collapse;margin-bottom:8px;">' .
+            '<thead><tr style="background-color:#f5f5f5;"><th style="text-align:left;padding:8px;border-bottom:1px solid #ddd;">参数</th><th style="text-align:left;padding:8px;border-bottom:1px solid #ddd;">说明</th><th style="text-align:left;padding:8px;border-bottom:1px solid #ddd;">示例</th></tr></thead>' .
+            '<tbody>' .
+            '<tr><td style="padding:8px;border-bottom:1px solid #eee;"><code>num</code></td><td style="padding:8px;border-bottom:1px solid #eee;">显示友链数量，不指定则显示全部</td><td style="padding:8px;border-bottom:1px solid #eee;"><code>[LinksPlus num=5 /]</code></td></tr>' .
+            '<tr><td style="padding:8px;border-bottom:1px solid #eee;"><code>sort</code></td><td style="padding:8px;border-bottom:1px solid #eee;">排序字段，支持 name/date/order，不指定则按后台设置</td><td style="padding:8px;border-bottom:1px solid #eee;"><code>[LinksPlus sort=order /]</code></td></tr>' .
+            '<tr><td style="padding:8px;border-bottom:1px solid #eee;"><code>OnlyForm</code></td><td style="padding:8px;border-bottom:1px solid #eee;">仅输出友链申请表单，不渲染友链列表（需已启用友链申请功能）</td><td style="padding:8px;border-bottom:1px solid #eee;"><code>[LinksPlus OnlyForm/]</code></td></tr>' .
+            '<tr><td style="padding:8px;"><strong>完整示例</strong></td><td colspan="2" style="padding:8px;"><code>[LinksPlus num=10 sort=order /]</code></td></tr>' .
+            '</tbody>' .
+            '</table>' .
+            '</div>'
+        );
+        $form->addItem($shortcodeParamsCard);
+
+        // 短代码启用开关
+        $enableShortcode = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'enable_shortcodes',
+            array('links_plus' => _t('启用 [LinksPlus /] 短代码')),
+            array('links_plus'),
+            _t('短代码开关'),
+            _t('勾选后在前台启用短代码功能')
+        );
+        $form->addInput($enableShortcode);
+
+        // 短代码输出模板选择
+        $selectedShortcode = new Typecho_Widget_Helper_Form_Element_Select(
+            'template_shortcode',
+            $tplOptionsShortcode,
+            '',
+            _t('短代码使用的模板'),
+            _t('选择一个文件模板。选择后，前台使用 [LinksPlus /] 短代码会优先使用该模板渲染。')
+        );
+        $form->addInput($selectedShortcode);
+
+        // 短代码模板预览卡片
+        $optionsObj = Typecho_Widget::widget('Widget_Options');
+        $tplBaseUrl = Typecho_Common::url('usr/plugins/Links/templates/', $optionsObj->siteUrl);
+
+        $shortcodePreview = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $shortcodePreview->html(
+            '<div class="md3-title">短代码模板预览</div>' .
+            '<div class="md3-body">' .
+            '<div id="shortcode-tpl-preview-html" style="min-height:160px;border-radius:8px;padding:12px;overflow:auto;"></div>' .
+            '<div id="shortcode-tpl-preview-title" style="font-size:13px;color:#555;margin-top:8px;text-align:center"></div>' .
+            '</div>'
+        );
+        $form->addItem($shortcodePreview);
+
+        // 前端脚本：根据短代码模板选择渲染测试友链的真实 HTML 预览
+        $previewScriptShortcode = <<<'SCRIPT'
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    var sel = document.querySelector('select[name="template_shortcode"]');
+    var host = document.getElementById('shortcode-tpl-preview-html');
+    var title = document.getElementById('shortcode-tpl-preview-title');
+    if(!sel || !host || !title) return;
+    var base = '%s';
+
+    var demoLinks = [
+        {
+            lid: '1',
+            name: "LHL's Blog",
+            title: '博客',
+            description: '作者的博客',
+            sort: '博客',
+            url: 'https://blog.lhl.one',
+            image: 'https://smms-vip3.see.you/2025/04/18/KXpf8u5SQYNPkA3.jpg',
+            user: ''
+        },
+        {
+            lid: '2',
+            name: "LHL's Shop",
+            title: '图床',
+            description: '作者的聚合图床',
+            sort: '图床',
+            url: 'https://img.lhl.one',
+            image: 'https://smms-vip3.see.you/2026/01/27/ctiYDAXyxkRGbmB.png',
+            user: ''
+        }
+    ];
+
+    function esc(v){
+        return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function requestText(url, cb){
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.onreadystatechange = function(){
+            if(xhr.readyState !== 4) return;
+            if(xhr.status >= 200 && xhr.status < 300){
+                cb(null, xhr.responseText || '');
+            } else {
+                cb(new Error('HTTP ' + xhr.status));
+            }
+        };
+        xhr.send(null);
+    }
+
+    function applyTemplate(tpl, item){
+        var out = tpl;
+        var map = {
+            lid: item.lid,
+            name: esc(item.name),
+            url: esc(item.url),
+            sort: esc(item.sort),
+            title: esc(item.title),
+            description: esc(item.description),
+            image: esc(item.image),
+            user: esc(item.user),
+            size: '120'
+        };
+        for(var k in map){
+            if(Object.prototype.hasOwnProperty.call(map, k)){
+                out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), map[k]);
+            }
+        }
+        return out;
+    }
+
+    function wrapHtml(itemsHtml, manifestText){
+        try {
+            var manifest = JSON.parse(manifestText || '{}');
+            var wrapper = manifest && manifest.wrapper ? manifest.wrapper : null;
+            if(!wrapper || !wrapper.tag) return itemsHtml;
+            var tag = String(wrapper.tag).toLowerCase();
+            if(['ul','ol','div'].indexOf(tag) === -1) return itemsHtml;
+            var el = document.createElement(tag);
+            if(wrapper.class) el.className = String(wrapper.class);
+            if(wrapper.id) el.id = String(wrapper.id);
+            if(wrapper.attrs && typeof wrapper.attrs === 'object'){
+                for(var key in wrapper.attrs){
+                    if(Object.prototype.hasOwnProperty.call(wrapper.attrs, key)){
+                        el.setAttribute(key, String(wrapper.attrs[key]));
+                    }
+                }
+            }
+            el.innerHTML = itemsHtml;
+            return el.outerHTML;
+        } catch (e) {
+            return itemsHtml;
+        }
+    }
+
+    function injectPreviewCss(name, cssText){
+        var styleId = 'lp-shortcode-preview-style';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        if(!cssText) return;
+        var el = document.createElement('style');
+        el.id = styleId;
+        el.textContent = cssText;
+        document.head.appendChild(el);
+    }
+
+    function injectPreviewJs(scriptId, jsText){
+        var old = document.getElementById(scriptId);
+        if(old) old.parentNode.removeChild(old);
+        if(!jsText) return;
+        var el = document.createElement('script');
+        el.id = scriptId;
+        el.textContent = jsText;
+        document.body.appendChild(el);
+    }
+
+    function renderTemplate(name){
+        var styleId  = 'lp-shortcode-preview-style';
+        var scriptId = 'lp-shortcode-preview-script';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        var oldScript = document.getElementById(scriptId);
+        if(oldScript) oldScript.parentNode.removeChild(oldScript);
+
+        requestText(base + name + '/template.html', function(err, tpl){
+            if(err || !tpl || !tpl.trim()){
+                host.innerHTML = '<div style="color:#b91c1c;">模板读取失败，无法预览。</div>';
+                title.textContent = '';
+                return;
+            }
+
+            var html = '';
+            for(var i = 0; i < demoLinks.length; i++){
+                html += applyTemplate(tpl, demoLinks[i]);
+            }
+
+            requestText(base + name + '/manifest.json', function(manifestErr, manifestText){
+                var manifest = null;
+                try { manifest = JSON.parse(manifestText || '{}'); } catch(e) {}
+                var wrapped = (manifestErr || !manifest) ? html : wrapHtml(html, manifestText);
+                host.innerHTML = wrapped;
+                title.textContent = '';
+                if(manifest && manifest.inject && manifest.inject.css){
+                    requestText(base + name + '/style.css?t=' + Date.now(), function(cssErr, cssText){
+                        if(!cssErr && cssText) injectPreviewCss(name, cssText);
+                    });
+                }
+                if(manifest && manifest.inject && manifest.inject.js){
+                    requestText(base + name + '/script.js?t=' + Date.now(), function(jsErr, jsText){
+                        if(!jsErr && jsText) injectPreviewJs(scriptId, jsText);
+                    });
+                }
+            });
+        });
+    }
+
+    function update(){
+        var v = sel.value || '';
+        if(v){
+            renderTemplate(v);
+        } else {
+            var styleId = 'lp-shortcode-preview-style';
+            var old = document.getElementById(styleId);
+            if(old) old.parentNode.removeChild(old);
+            host.innerHTML = '<div style="color:#6b7280;">请选择模板后预览。</div>';
+            title.textContent = '';
+        }
+    }
+
+    sel.addEventListener('change', update);
+    update();
+});
+</script>
+SCRIPT;
+        echo sprintf($previewScriptShortcode, $tplBaseUrl);
+
+        // ========== 友链申请配置卡片 ==========
+        $applyCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $applyCard->html(
+            '<div class="md3-title">友链申请</div>'
+            . '<div class="md3-body">'
+            . '<p>开启后，前台可提交友链申请，提交记录会以“待审核（state=2）”进入管理页。</p>'
+            . '<p><span class="md3-chip">显示策略</span><span style="margin-left:8px">可单独设置是否跟随“正文重写”或“短代码”一并显示申请表单。</span></p>'
+            . '<p><span class="md3-chip">OnlyForm 短代码</span><span style="margin-left:8px">使用 <code>[LinksPlus OnlyForm/]</code> 可单独输出申请表单，不渲染友链列表。</span></p>'
+            . '</div>'
+        );
+        $form->addItem($applyCard);
+
+        $enableApply = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'enable_link_apply',
+            array('enabled' => _t('启用前台友链申请功能')),
+            array(),
+            _t('友链申请开关'),
+            _t('开启后才会渲染申请表单并接受前台提交。')
+        );
+        $form->addInput($enableApply);
+
+        $applyDisplayTargets = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_display_targets',
+            array(
+                'rewrite' => _t('跟随“正文重写”输出申请表单'),
+                'shortcode' => _t('跟随“短代码”输出申请表单'),
+            ),
+            array('rewrite', 'shortcode'),
+            _t('申请表单显示位置'),
+            _t('至少勾选一个位置；未勾选时即使开启功能也不会在前台显示。')
+        );
+        $form->addInput($applyDisplayTargets);
+
+        $applyTemplate = new Typecho_Widget_Helper_Form_Element_Select(
+            'template_apply',
+            $tplOptionsApply,
+            '',
+            _t('友链申请使用模板'),
+            _t('通过选取模板来个性化申请表单的显示样式。')
+        );
+        $form->addInput($applyTemplate);
+
+        $applyDefaultSort = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_default_sort',
+            null,
+            '友链申请',
+            _t('申请默认分类'),
+            _t('前台申请写入数据库时默认使用该分类。')
+        );
+        $applyDefaultSort->input->setAttribute('class', 'w-20');
+        $form->addInput($applyDefaultSort);
+
+        $applyRequireDesc = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_require_description',
+            array('required' => _t('申请时必须填写友链描述')),
+            array(),
+            _t('描述字段要求'),
+            _t('名称、地址、图片始终为必填；本项用于额外控制描述是否必填。')
+        );
+        $form->addInput($applyRequireDesc);
+
+        $applyRequireEmail = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_require_email',
+            array('required' => _t('申请时必须填写邮箱')),
+            array('required'),
+            _t('邮箱字段要求'),
+            _t('建议保持必填，以便审核通过/驳回时向申请者发送通知。')
+        );
+        $form->addInput($applyRequireEmail);
+
+        $applyRequireUser = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_require_user',
+            array('required' => _t('申请时必须填写自定义数据')),
+            array(),
+            _t('自定义数据字段要求'),
+            _t('可用于要求申请者补充更多信息。')
+        );
+        $form->addInput($applyRequireUser);
+        $applyShowUserField = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_show_user_field',
+            array('show' => _t('显示"自定义数据"字段')),
+            array('show'),
+            _t('自定义数据字段'),
+            _t('取消勾选可在前台申请表单中完全隐藏该字段。')
+        );
+        $form->addInput($applyShowUserField);
+
+        $applyAdvCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $applyAdvCard->html(
+            '<div class="md3-title">申请表单高级设置</div>'
+            . '<div class="md3-body"><p>自定义申请表单的标题、描述与外观风格。</p></div>'
+        );
+        $form->addItem($applyAdvCard);
+
+        $applyTitle = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_title',
+            null,
+            '',
+            _t('表单标题'),
+            _t('留空使用默认文本"接受友链申请"。')
+        );
+        $form->addInput($applyTitle);
+
+        $applyDesc = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'apply_desc',
+            null,
+            '',
+            _t('表单描述'),
+            _t('留空使用默认文本。')
+        );
+        $form->addInput($applyDesc);
+
+        $applyDefaultOpen = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_default_open',
+            array('open' => _t('默认展开申请表单')),
+            array('open'),
+            _t('表单默认状态'),
+            _t('勾选则申请表单默认展开；取消则默认折叠（仅对内置内联表单有效，弹窗模式和自定义模板不受此影响）。')
+        );
+        $form->addInput($applyDefaultOpen);
+
+        $applyColorMode = new Typecho_Widget_Helper_Form_Element_Select(
+            'apply_color_mode',
+            array(
+                'auto'  => _t('自动（跟随主题 class）'),
+                'light' => _t('强制亮色'),
+                'dark'  => _t('强制暗色'),
+            ),
+            'auto',
+            _t('颜色模式'),
+            _t('"自动"随主题 dark class 切换；"强制亮色/暗色"忽略主题，对友链申请表单、正文重写及短代码输出均生效。')
+        );
+        $form->addInput($applyColorMode);
+
+        $applyPopupBtnStyle = new Typecho_Widget_Helper_Form_Element_Select(
+            'apply_popup_btn_style',
+            array(
+                'default'  => _t('默认（蓝底白字）'),
+                'outline'  => _t('描边（透明底蓝边）'),
+                'ghost'    => _t('幽灵（透明底灰边）'),
+                'gradient' => _t('渐变（蓝紫渐变动画）'),
+            ),
+            'default',
+            _t('弹窗按钮样式'),
+            _t('仅在"弹窗"模式下生效。')
+        );
+        $form->addInput($applyPopupBtnStyle);
+
+        $applyDarkClasses = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_dark_classes',
+            null,
+            '',
+            _t('自定义暗色模式 class'),
+            _t('用空格或逗号分隔多个 class 名（如 <code>night my-dark</code>），会自动为 <code>body.xxx</code> 和 <code>html.xxx</code> 生成暗色适配规则。'
+                . '<br>已内置：<code>body.dark</code>、<code>body.dark-mode</code>、<code>body.dark-theme</code>、<code>body.theme-dark</code>'
+                . '、<code>html.dark</code>、<code>html.dark-mode</code>、<code>html.dark-theme</code>、<code>html.theme-dark</code>'
+                . '、<code>[data-theme="dark"]</code>')
+        );
+        $form->addInput($applyDarkClasses);
+
+        $applyLightClasses = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_light_classes',
+            null,
+            '',
+            _t('自定义亮色模式 class'),
+            _t('指定强制亮色模式的 class（空格或逗号分隔），与"颜色模式"为"自动"时配合使用。已内置：<code>[data-lp-theme="light"]</code>')
+        );
+        $form->addInput($applyLightClasses);
+
+        $applyMailCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $applyMailCard->html(
+            '<div class="md3-title">友链申请邮件通知</div>'
+            . '<div class="md3-body">'
+            . '<p>邮件支持 <code>phpmail</code>和 <code>SMTP</code> 两种驱动。邮件通道可同时通知管理员和申请者（审核结果）。</p>'
+            . '<p>可用模板变量：<code>{{name}}</code> <code>{{url}}</code> <code>{{image}}</code> <code>{{sort}}</code> <code>{{description}}</code> <code>{{user}}</code> <code>{{email}}</code> <code>{{site_name}}</code> <code>{{site_url}}</code> <code>{{reason}}</code> <code>{{manage_url}}</code>（仅管理员通知可用）</p>'
+            . '</div>'
+        );
+        $form->addItem($applyMailCard);
+
+        $applyMailEnabled = new Typecho_Widget_Helper_Form_Element_Checkbox(
+            'apply_mail_enabled',
+            array('enabled' => _t('启用邮件通知')),
+            array('enabled'),
+            _t('邮件通知开关'),
+            _t('开启后会发送：申请提醒给管理员、审核通过/驳回通知给申请者。')
+        );
+        $form->addInput($applyMailEnabled);
+
+        $applyMailDriver = new Typecho_Widget_Helper_Form_Element_Select(
+            'apply_mail_driver',
+            array(
+                'phpmail' => _t('phpmail'),
+                'smtp'    => _t('SMTP'),
+            ),
+            'phpmail',
+            _t('邮件驱动'),
+            _t('选择 SMTP 后需填写下方 SMTP 服务器配置。')
+        );
+        $form->addInput($applyMailDriver);
+
+        // SMTP 服务器配置（仅 smtp 驱动时使用）
+        $applySmtpHost = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_smtp_host',
+            null,
+            '',
+            _t('SMTP 服务器地址'),
+            _t('例如：smtp.qq.com / smtp.gmail.com / smtp.163.com')
+        );
+        $applySmtpHost->input->setAttribute('class', 'w-40');
+        $form->addInput($applySmtpHost);
+
+        $applySmtpPort = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_smtp_port',
+            null,
+            '587',
+            _t('SMTP 端口'),
+            _t('STARTTLS 通常用 587；SSL/TLS 直连用 465；明文用 25。')
+        );
+        $applySmtpPort->input->setAttribute('class', 'w-10');
+        $form->addInput($applySmtpPort);
+
+        $applySmtpSecure = new Typecho_Widget_Helper_Form_Element_Select(
+            'apply_smtp_secure',
+            array(
+                'tls'  => _t('STARTTLS（推荐，port 587）'),
+                'ssl'  => _t('SSL/TLS（port 465）'),
+                'none' => _t('无加密（port 25，不推荐）'),
+            ),
+            'tls',
+            _t('SMTP 加密方式'),
+            _t('与端口对应，建议保持 STARTTLS + 587。')
+        );
+        $form->addInput($applySmtpSecure);
+
+        $applySmtpUser = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_smtp_user',
+            null,
+            '',
+            _t('SMTP 用户名'),
+            _t('通常为完整邮箱地址，也用作发件地址（若未单独配置发件邮箱）。')
+        );
+        $applySmtpUser->input->setAttribute('class', 'w-40');
+        $form->addInput($applySmtpUser);
+
+        $applySmtpPass = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_smtp_pass',
+            null,
+            '',
+            _t('SMTP 密码 / 授权码'),
+            _t('QQ/163 等使用授权码而非登录密码；密码以明文存入数据库，请确保数据库安全。')
+        );
+        $applySmtpPass->input->setAttribute('class', 'w-40');
+        $applySmtpPass->input->setAttribute('type', 'password');
+        $applySmtpPass->input->setAttribute('autocomplete', 'new-password');
+        $form->addInput($applySmtpPass);
+
+        $applyMailAdminTo = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_admin_to',
+            null,
+            '',
+            _t('管理员通知邮箱'),
+            _t('收到新申请时通知该邮箱，例如：admin@example.com')
+        );
+        $applyMailAdminTo->input->setAttribute('class', 'w-40');
+        $form->addInput($applyMailAdminTo);
+
+        $applyMailFromEmail = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_from_email',
+            null,
+            '',
+            _t('发件邮箱（From）'),
+            _t('留空则尝试使用管理员通知邮箱。')
+        );
+        $applyMailFromEmail->input->setAttribute('class', 'w-40');
+        $form->addInput($applyMailFromEmail);
+
+        $applyMailFromName = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_from_name',
+            null,
+            'Links Plus',
+            _t('发件人名称'),
+            _t('邮件显示的发件人名称。')
+        );
+        $applyMailFromName->input->setAttribute('class', 'w-20');
+        $form->addInput($applyMailFromName);
+
+        $applyTplAdminSubject = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_tpl_admin_subject',
+            null,
+            '【{{site_name}}】收到新的友链申请：{{name}}',
+            _t('管理员通知主题模板'),
+            _t('新申请提交后发送给管理员。')
+        );
+        $form->addInput($applyTplAdminSubject);
+
+        $applyTplAdminBody = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'apply_mail_tpl_admin_body',
+            null,
+            '<p style="margin:0 0 16px;font-size:14px;color:#374151;line-height:1.6">收到一条新的友链申请，请前往后台审核。</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px;border-bottom:1px solid #e5e7eb">站点名称</td><td style="padding:10px 16px;background:#f8fafc;color:#111827;font-weight:600;border-bottom:1px solid #e5e7eb">{{name}}</td></tr><tr><td style="padding:10px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb">站点地址</td><td style="padding:10px 16px;border-bottom:1px solid #e5e7eb"><a href="{{url}}" style="color:#0061a4">{{url}}</a></td></tr><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;border-bottom:1px solid #e5e7eb">描述</td><td style="padding:10px 16px;background:#f8fafc;color:#374151;border-bottom:1px solid #e5e7eb">{{description}}</td></tr><tr><td style="padding:10px 16px;color:#6b7280;border-bottom:1px solid #e5e7eb">邮箱</td><td style="padding:10px 16px;color:#374151;border-bottom:1px solid #e5e7eb">{{email}}</td></tr><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280">分类</td><td style="padding:10px 16px;background:#f8fafc;color:#374151">{{sort}}</td></tr></table></div><div style="margin-top:20px;text-align:center"><a href="{{manage_url}}" style="display:inline-block;padding:10px 24px;background:#0061a4;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">前往审核</a></div>',
+            _t('管理员通知正文模板'),
+            _t('支持使用上方列出的模板变量。')
+        );
+        $form->addInput($applyTplAdminBody);
+
+        $applyTplApprovedSubject = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_tpl_approved_subject',
+            null,
+            '【{{site_name}}】你的友链申请已通过',
+            _t('通过通知主题模板'),
+            _t('审核通过后发送给申请者。')
+        );
+        $form->addInput($applyTplApprovedSubject);
+
+        $applyTplApprovedBody = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'apply_mail_tpl_approved_body',
+            null,
+'<div style="text-align:center;padding-bottom:20px"><div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:50%;background:#e8f3ff;font-size:26px">✓</div><p style="margin:10px 0 0;font-size:20px;font-weight:700;color:#0061a4">申请已通过！</p></div><p style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.7">Hi <strong>{{name}}</strong>，你提交至 <strong>{{site_name}}</strong> 的友链申请已审核通过，感谢你的申请！</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:20px"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px">友链地址</td><td style="padding:10px 16px;background:#f8fafc"><a href="{{url}}" style="color:#0061a4;font-weight:600">{{url}}</a></td></tr></table></div><p style="margin:0;font-size:14px;color:#6b7280">🌐 欢迎互链，期待与你交流！</p>',
+            _t('通过通知正文模板'),
+            _t('支持使用上方列出的模板变量。')
+        );
+        $form->addInput($applyTplApprovedBody);
+
+        $applyTplRejectedSubject = new Typecho_Widget_Helper_Form_Element_Text(
+            'apply_mail_tpl_rejected_subject',
+            null,
+            '【{{site_name}}】你的友链申请未通过',
+            _t('驳回通知主题模板'),
+            _t('审核驳回后发送给申请者。')
+        );
+        $form->addInput($applyTplRejectedSubject);
+
+        $applyTplRejectedBody = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'apply_mail_tpl_rejected_body',
+            null,
+'<p style="margin:0 0 20px;font-size:14px;color:#374151;line-height:1.7">Hi <strong>{{name}}</strong>，很遗憾，你提交至 <strong>{{site_name}}</strong> 的友链申请本次未能通过审核。</p><div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin-bottom:20px"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:14px"><tr><td style="padding:10px 16px;background:#f8fafc;color:#6b7280;width:90px;border-bottom:1px solid #e5e7eb">友链地址</td><td style="padding:10px 16px;background:#f8fafc;border-bottom:1px solid #e5e7eb"><a href="{{url}}" style="color:#0061a4">{{url}}</a></td></tr><tr><td style="padding:10px 16px;color:#6b7280">驳回原因</td><td style="padding:10px 16px;color:#374151">{{reason}}</td></tr></table></div><p style="margin:0;font-size:13px;color:#9ca3af">如有疑问，欢迎直接回复此邮件与我们联系。</p>',
+            _t('驳回通知正文模板'),
+            _t('支持使用上方列出的模板变量。')
+        );
+        $form->addInput($applyTplRejectedBody);
+
+        $ajaxCompat = new Typecho_Widget_Helper_Form_Element_Select(
+            'ajax_compat_mode',
+            array(
+                'default' => _t('默认（自动检测）'),
+                'force_pjax' => _t('强制开启 PJAX 重载兼容'),
+                'manual' => _t('手动指定函数（需要读取代码）')
+            ),
+            'default',
+            _t('AJAX 兼容性模式'),
+            _t('用于处理主题的 PJAX/AJAX 加载。如遇到动态加载后友链不显示，可调整此项。')
+        );
+        $form->addInput($ajaxCompat);
+
+        // PJAX 重载函数名列表卡片
+        $pjaxFuncsCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
+        $pjaxFuncsCard->html(
+            '<div class="md3-title">PJAX 重载函数名参考</div>' .
+            '<div class="md3-body" style="font-size: 13px; line-height: 1.8;">' .
+            '<p>若主题使用了 PJAX 动态加载，需要在主题 JS 中手动调用相应函数重新初始化友链。常见的重载函数名：</p>' .
+            '<ul style="margin: 8px 0 0 24px;">' .
+            '<li><span class="field-tag">initLinks()</span> / <span class="field-tag">Links.init()</span> - 通用初始化</li>' .
+            '<li><span class="field-tag">renderLinks()</span> - 重新渲染友链</li>' .
+            '<li><span class="field-tag">loadLinks()</span> - 加载友链</li>' .
+            '<li><span class="field-tag">window.addEventListener(\'pjax:end\', callback)</span> - PJAX 事件钩子</li>' .
+            '</ul>' .
+            '<p style="margin-top: 12px; color: #6b7280;">⚠️ 具体函数名需根据你的主题源码确认。建议在浏览器开发者工具（F12）的 Console 标签页测试。</p>' .
+            '</div>'
+        );
+        $form->addItem($pjaxFuncsCard);
+
+        // 前端脚本：将配置区重组为可折叠分组（原版设置 / 正文重写 / 短代码支持）
+        echo <<<'SCRIPT'
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    var form = document.querySelector('form');
+    if (!form) return;
+
+    function findOptionByName(name){
+        var field = form.querySelector('[name="' + name + '"], [name="' + name + '[]"]');
+        if (!field) {
+            field = form.querySelector('[name^="' + name + '["]');
+        }
+        if (!field) return null;
+        return field.closest('.typecho-option') || null;
+    }
+
+    function findCardByTitle(titleText){
+        var titles = form.querySelectorAll('.md3-card .md3-title');
+        for (var i = 0; i < titles.length; i++) {
+            var t = (titles[i].textContent || '').trim();
+            if (t === titleText) {
+                return titles[i].closest('.typecho-option') || titles[i].closest('.md3-card');
+            }
+        }
+        return null;
+    }
+
+    function createFoldCard(title, openByDefault){
+        var card = document.createElement('div');
+        card.className = 'md3-card md3-fold-card';
+
+        var details = document.createElement('details');
+        details.className = 'md3-fold';
+        if (openByDefault) details.open = true;
+
+        var summary = document.createElement('summary');
+        summary.innerHTML = '<span class="md3-fold-title"></span><span class="md3-fold-hint">点击展开/收起</span>';
+        summary.querySelector('.md3-fold-title').textContent = title;
+
+        var body = document.createElement('div');
+        body.className = 'md3-fold-body';
+
+        details.appendChild(summary);
+        details.appendChild(body);
+        card.appendChild(details);
+        return { card: card, body: body };
+    }
+
+    function uniqueNodes(nodes){
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i] && out.indexOf(nodes[i]) === -1) out.push(nodes[i]);
+        }
+        return out;
+    }
+
+    function mountFold(title, nodes, openByDefault){
+        var items = uniqueNodes(nodes);
+        if (!items.length) return;
+
+        var fold = createFoldCard(title, openByDefault);
+        var anchor = items[0];
+        anchor.parentNode.insertBefore(fold.card, anchor);
+
+        for (var i = 0; i < items.length; i++) {
+            fold.body.appendChild(items[i]);
+        }
+    }
+
+    mountFold('原版设置', [
+        findOptionByName('template_text'),
+        findOptionByName('template_img'),
+        findOptionByName('template_mix'),
+        findCardByTitle('高级：自定义源码规则（兼容旧版本）'),
+        findOptionByName('pattern_text'),
+        findOptionByName('pattern_img'),
+        findOptionByName('pattern_mix'),
+        findOptionByName('dsize')
+    ], false);
+
+    mountFold('正文重写', [
+        findCardByTitle('正文重写'),
+        findOptionByName('rewrite_cids'),
+        findOptionByName('rewrite_pattern'),
+        findCardByTitle('重写主题预览'),
+        findOptionByName('rewrite_num'),
+        findOptionByName('rewrite_sort'),
+        findOptionByName('rewrite_size'),
+        findOptionByName('rewrite_wrap_bang')
+    ], false);
+
+    mountFold('短代码支持', [
+        findCardByTitle('短代码支持'),
+        findCardByTitle('短代码参数说明'),
+        findOptionByName('enable_shortcodes'),
+        findOptionByName('template_shortcode'),
+        findCardByTitle('短代码模板预览')
+    ], false);
+
+    mountFold('友链申请', [
+        findCardByTitle('友链申请'),
+        findOptionByName('enable_link_apply'),
+        findOptionByName('apply_display_targets'),
+        findOptionByName('template_apply'),
+        findOptionByName('apply_default_sort'),
+        findOptionByName('apply_require_description'),
+        findOptionByName('apply_require_email'),
+        findOptionByName('apply_require_user'),
+        findOptionByName('apply_show_user_field'),
+        findCardByTitle('申请表单高级设置'),
+        findOptionByName('apply_title'),
+        findOptionByName('apply_desc'),
+        findOptionByName('apply_default_open'),
+        findOptionByName('apply_popup_btn_style'),
+        findCardByTitle('友链申请邮件通知'),
+        findOptionByName('apply_mail_enabled'),
+        findOptionByName('apply_mail_driver'),
+        findOptionByName('apply_smtp_host'),
+        findOptionByName('apply_smtp_port'),
+        findOptionByName('apply_smtp_secure'),
+        findOptionByName('apply_smtp_user'),
+        findOptionByName('apply_smtp_pass'),
+        findOptionByName('apply_mail_admin_to'),
+        findOptionByName('apply_mail_from_email'),
+        findOptionByName('apply_mail_from_name'),
+        findOptionByName('apply_mail_tpl_admin_subject'),
+        findOptionByName('apply_mail_tpl_admin_body'),
+        findOptionByName('apply_mail_tpl_approved_subject'),
+        findOptionByName('apply_mail_tpl_approved_body'),
+        findOptionByName('apply_mail_tpl_rejected_subject'),
+        findOptionByName('apply_mail_tpl_rejected_body')
+    ], false);
+
+    mountFold('亮暗色适配', [
+        findOptionByName('apply_color_mode'),
+        findOptionByName('apply_dark_classes'),
+        findOptionByName('apply_light_classes')
+    ], false);
+
+    mountFold('AJAX 兼容', [
+        findOptionByName('ajax_compat_mode'),
+        findCardByTitle('PJAX 重载函数名参考')
+    ], false);
+
+    // SMTP 字段随驱动选择显示/隐藏
+    (function(){
+        var driverSel = form.querySelector('[name="apply_mail_driver"]');
+        var smtpNames = ['apply_smtp_host','apply_smtp_port','apply_smtp_secure','apply_smtp_user','apply_smtp_pass'];
+        var smtpEls = smtpNames.map(function(n){
+            var f = form.querySelector('[name="' + n + '"]');
+            return f ? (f.closest('.typecho-option') || f.parentNode) : null;
+        }).filter(Boolean);
+
+        function toggleSmtp(){
+            var show = driverSel && driverSel.value === 'smtp';
+            smtpEls.forEach(function(el){ el.style.display = show ? '' : 'none'; });
+        }
+        if (driverSel) {
+            driverSel.addEventListener('change', toggleSmtp);
+            toggleSmtp();
+        }
+    })();
+});
+</script>
+SCRIPT;
         
         // //重写按钮（GET，走 Action，带 CSRF），这里是测试的时候用的
         // $sec = Helper::security();
@@ -1063,7 +3294,7 @@ SCRIPT;
             }
         }
 
-        $html = Links_Plugin::output_str('', array($pattern, $num, $sort, $size, 'HTML'));
+        $html = Links_Plugin::output_str('', array($pattern, $num, $sort, $size, 'HTML', 'rewrite'));
         // 资产写在正文前，避免部分主题/解析器只截取首段导致样式丢失
         if ($assetCss !== '' || $assetJs !== '') {
             $html = $assetCss . $assetJs . (string)$html;
@@ -1202,7 +3433,7 @@ SCRIPT;
         $form->addInput($user);
 
         /** 友链状态 */
-        $list = array('0' => '禁用', '1' => '启用');
+        $list = array('0' => '禁用', '1' => '启用', '2' => '待审核');
         $state = new Typecho_Widget_Helper_Form_Element_Radio('state', $list, '1', '友链状态');
         $form->addInput($state);
 
@@ -1297,6 +3528,18 @@ SCRIPT;
         $sort = !empty($params[2]) && is_string($params[2]) ? $params[2] : null;
         $size = !empty($params[3]) && is_numeric($params[3]) ? $params[3] : $settings->dsize;
         $mode = isset($params[4]) ? $params[4] : 'FUNC';
+        $context = isset($params[5]) ? trim((string)$params[5]) : '';
+
+        // ONLYFORM 模式：只输出友链申请表单，不渲染友链
+        if (strtoupper($pattern) === 'ONLYFORM') {
+            $applyHtml = self::renderApplyFormHtml('shortcode-onlyform');
+            if ($mode == 'HTML') {
+                return $applyHtml;
+            } else {
+                echo $applyHtml;
+            }
+            return;
+        }
 
         // 文件模板调用：TPL:template-name
         $tplManifest = null;
@@ -1402,17 +3645,41 @@ SCRIPT;
             }
         }
 
+        // 若模板声明了 wrapper，则自动包裹输出（如 ul > li）
+        if (!empty($tplManifest) && is_array($tplManifest) && trim($str) !== '') {
+            list($wrapOpen, $wrapClose) = self::buildTemplateWrapper($tplManifest);
+            if ($wrapOpen !== '' && $wrapClose !== '') {
+                $str = $wrapOpen . "\n" . $str . $wrapClose;
+            }
+        }
+
+        // 颜色模式强制包裹：强制暗色/亮色时为友链输出添加 data-lp-theme 属性
+        $colorMode = isset($settings->apply_color_mode) ? trim((string)$settings->apply_color_mode) : 'auto';
+        if ($str !== '' && ($colorMode === 'dark' || $colorMode === 'light')) {
+            $str = '<div data-lp-theme="' . $colorMode . '">' . $str . '</div>';
+        }
+
         // 注入模板资源：
         // - pattern = TPL:xxx
         // - 或 SHOW_* 映射到 template_text/img/mix 时同样需要注入
         if (!empty($tplName) && !empty($tplManifest) && is_array($tplManifest)) {
             self::injectTemplateAssetsOnce($tplName, $tplManifest);
+            // 为模板 CSS 追加用户自定义亮/暗 class 的等效规则
+            self::injectCustomDarkOverrideOnce($tplName, $tplManifest, $settings);
         }
 
+        // 将本次渲染的模板传给 apply form（供"跟随模板"选项使用）
+        self::activeRenderTplStore($tplName !== null ? $tplName : '');
+
+        $applyHtml = self::renderApplyFormHtml($context);
+
         if ($mode == 'HTML') {
-            return $str;
+            return $str . $applyHtml;
         } else {
             echo $str;
+            if ($applyHtml !== '') {
+                echo $applyHtml;
+            }
         }
     }
 
@@ -1457,34 +3724,45 @@ SCRIPT;
 
         // 开发中，短代码
         if (is_array($shortcodes) && in_array('links_plus', $shortcodes)) {
-            // 简单匹配 [links_plus] 或带参数形式 [links_plus num=5 sort=friends size=48 template=SHOW_IMG]
+            // 匹配 [LinksPlus /] 或 [LinksPlus/] 或带参数形式 [LinksPlus num=5 sort=friends size=48 template=SHOW_IMG]
+            // 支持大小写不敏感的 LinksPlus 或 links_plus
             $text = preg_replace_callback(
-                '/\[links_plus(?:\s+([^\]]+))?\]/i',
+                '/\[(?:LinksPlus|links_plus)(?:\s*([^\]]*))?\]/i',
                 function ($m) {
                     $args = array();
                     if (!empty($m[1])) {
-                        // 解析 key=value 或 单纯数字的简写（作为数量）
+                        // 解析参数
                         $str = trim($m[1]);
-                        // 支持 num=5 sort=friends size=48 template=SHOW_IMG
-                        preg_match_all('/(\w+)\s*=\s*"([^"]*)"|(\w+)\s*=\s*\'([^\']*)\'|(\w+)\s*=\s*([^\s"]+)/', $str, $ms, PREG_SET_ORDER);
-                        foreach ($ms as $row) {
-                            foreach ($row as $r) {
-                                // noop
-                            }
+                        
+                        // OnlyForm 模式：仅输出友链申请表单，不渲染友链
+                        if (strcasecmp(rtrim($str, '/ '), 'OnlyForm') === 0) {
+                            return Links_Plugin::output_str('', array('ONLYFORM', 0, null, 0, 'HTML', 'shortcode-onlyform'));
                         }
-                        // 另外也支持仅数字形式
-                        if (preg_match('/^\d+$/', $str)) {
-                            $args['num'] = (int)$str;
+
+                        // 特殊处理 "/" 或空格+/ 的情况（最小化调用形式）
+                        if ($str === '/' || $str === '') {
+                            // 使用默认配置：不指定参数则全部使用默认值
+                            $args = array();
                         } else {
-                            // 尝试解析常见的 key=value，容错简单实现
-                            $parts = preg_split('/\s+/', $str);
-                            foreach ($parts as $p) {
-                                if (strpos($p, '=') !== false) {
-                                    list($k, $v) = explode('=', $p, 2);
-                                    $k = trim($k);
-                                    $v = trim($v, " \t\n\r\0\x0B\"'");
-                                    $args[$k] = $v;
+                            // 支持 num=5 sort=friends size=48 template=SHOW_IMG 这样的 key=value 形式
+                            preg_match_all(
+                                '/(\w+)\s*=\s*"([^"]*)"|(\w+)\s*=\s*\'([^\']*)\'|(\w+)\s*=\s*([^\s"\']+)/',
+                                $str,
+                                $ms,
+                                PREG_SET_ORDER
+                            );
+                            foreach ($ms as $row) {
+                                // 根据匹配的组合赋值（PREG_SET_ORDER 返回的结构）
+                                $key = !empty($row[1]) ? $row[1] : (!empty($row[3]) ? $row[3] : (!empty($row[5]) ? $row[5] : null));
+                                $val = !empty($row[2]) ? $row[2] : (!empty($row[4]) ? $row[4] : (!empty($row[6]) ? $row[6] : null));
+                                if ($key && $val !== null) {
+                                    $args[$key] = $val;
                                 }
+                            }
+                            
+                            // 如果没有解析到 key=value，尝试解析简写形式（仅数字表示 num）
+                            if (empty($args) && preg_match('/^\d+$/', $str)) {
+                                $args['num'] = (int)$str;
                             }
                         }
                     }
@@ -1492,9 +3770,42 @@ SCRIPT;
                     $num = isset($args['num']) ? (int)$args['num'] : 0;
                     $sort = isset($args['sort']) ? $args['sort'] : null;
                     $size = isset($args['size']) ? (int)$args['size'] : 0;
-                    $pattern = isset($args['template']) ? $args['template'] : 'SHOW_TEXT';
+                    
+                    // 先检查参数中是否指定了 template
+                    if (isset($args['template']) && $args['template'] !== '') {
+                        $rawPattern = trim((string)$args['template']);
+                    } else {
+                        $rawPattern = '';
+                    }
 
-                    return Links_Plugin::output_str('', array($pattern, $num, $sort, $size, 'HTML'));
+                    // 统一把“模板名”规范为 TPL:xxx，保证会按 templates 渲染。
+                    // 支持：SHOW_* / TPL:xxx / 纯模板名(如 md3-cards)
+                    if ($rawPattern !== '') {
+                        if (preg_match('/^SHOW_(TEXT|IMG|MIX)$/i', $rawPattern)) {
+                            $pattern = strtoupper($rawPattern);
+                        } elseif (stripos($rawPattern, 'TPL:') === 0) {
+                            $pattern = 'TPL:' . trim(substr($rawPattern, 4));
+                        } else {
+                            $pattern = 'TPL:' . $rawPattern;
+                        }
+                    } else {
+                        // 如果短代码参数未指定 template，则从配置中读取 template_shortcode
+                        try {
+                            $options = Typecho_Widget::widget('Widget_Options');
+                            $settings = $options->plugin('Links');
+                            $tpl = isset($settings->template_shortcode) ? trim((string)$settings->template_shortcode) : '';
+                            if ($tpl !== '') {
+                                $pattern = 'TPL:' . $tpl;
+                            } else {
+                                // 回退到 SHOW_TEXT
+                                $pattern = 'SHOW_TEXT';
+                            }
+                        } catch (Exception $e) {
+                            $pattern = 'SHOW_TEXT';
+                        }
+                    }
+
+                    return Links_Plugin::output_str('', array($pattern, $num, $sort, $size, 'HTML', 'shortcode'));
                 },
                 $text
             );

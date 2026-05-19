@@ -1,0 +1,365 @@
+/* z-mizuki 主题友链样式 - LinksPlus 插件专用 */
+
+/* ===== 强调色：@property + CSS animation 驱动 hue 缓变 ===== */
+@property --lp-miz-hue {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 160;
+}
+
+@keyframes lpMizHue {
+    0%   { --lp-miz-hue: 130; }
+    50%  { --lp-miz-hue: 190; }
+    100% { --lp-miz-hue: 130; }
+}
+
+:root {
+    --lp-miz-hue: 160;
+    animation: lpMizHue 42s ease-in-out infinite;
+    --lp-miz-accent:       hsl(var(--lp-miz-hue), 58%, 46%);
+    --lp-miz-accent-hover: hsl(var(--lp-miz-hue), 58%, 38%);
+    --lp-miz-accent-light: hsla(var(--lp-miz-hue), 58%, 46%, 0.08);
+}
+
+/* ===== 容器 ===== */
+.lp-miz-container {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 16px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    list-style: none !important;
+}
+
+@media (max-width: 960px) {
+    .lp-miz-container {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 540px) {
+    .lp-miz-container {
+        grid-template-columns: minmax(0, 1fr) !important;
+    }
+}
+
+/* ===== 入场动画 ===== */
+@keyframes lpMizFadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.lp-miz-card {
+    animation: lpMizFadeUp 0.4s cubic-bezier(.4, 0, .2, 1) both !important;
+}
+
+.lp-miz-card:nth-child(1)  { animation-delay: 0.00s !important; }
+.lp-miz-card:nth-child(2)  { animation-delay: 0.06s !important; }
+.lp-miz-card:nth-child(3)  { animation-delay: 0.12s !important; }
+.lp-miz-card:nth-child(4)  { animation-delay: 0.18s !important; }
+.lp-miz-card:nth-child(5)  { animation-delay: 0.24s !important; }
+.lp-miz-card:nth-child(6)  { animation-delay: 0.30s !important; }
+.lp-miz-card:nth-child(7)  { animation-delay: 0.36s !important; }
+.lp-miz-card:nth-child(8)  { animation-delay: 0.42s !important; }
+.lp-miz-card:nth-child(9)  { animation-delay: 0.48s !important; }
+.lp-miz-card:nth-child(10) { animation-delay: 0.52s !important; }
+.lp-miz-card:nth-child(11) { animation-delay: 0.56s !important; }
+.lp-miz-card:nth-child(12) { animation-delay: 0.60s !important; }
+.lp-miz-card:nth-child(13) { animation-delay: 0.64s !important; }
+.lp-miz-card:nth-child(14) { animation-delay: 0.68s !important; }
+.lp-miz-card:nth-child(15) { animation-delay: 0.72s !important; }
+.lp-miz-card:nth-child(16) { animation-delay: 0.76s !important; }
+.lp-miz-card:nth-child(17) { animation-delay: 0.80s !important; }
+.lp-miz-card:nth-child(18) { animation-delay: 0.84s !important; }
+.lp-miz-card:nth-child(19) { animation-delay: 0.88s !important; }
+.lp-miz-card:nth-child(20) { animation-delay: 0.92s !important; }
+
+/* ===== 卡片主体 ===== */
+.lp-miz-card {
+    position: relative !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-width: 0 !important;
+    background: #fff !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    padding: 16px !important;
+    box-sizing: border-box !important;
+    transition: box-shadow 0.25s cubic-bezier(.4, 0, .2, 1) !important;
+}
+
+.lp-miz-card:hover {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* ===== 头部 ===== */
+.lp-miz-header {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    margin-bottom: 10px !important;
+}
+
+.lp-miz-avatar-link {
+    flex-shrink: 0 !important;
+    display: block !important;
+    width: 64px !important;
+    height: 64px !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    text-decoration: none !important;
+    outline: none !important;
+}
+
+.lp-miz-avatar {
+    width: 64px !important;
+    height: 64px !important;
+    border-radius: 10px !important;
+    background: #e5e7eb no-repeat center center / cover !important;
+    display: block !important;
+}
+
+.lp-miz-meta {
+    flex: 1 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    padding-top: 2px !important;
+}
+
+.lp-miz-name {
+    display: block !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    line-height: 1.3 !important;
+    color: #111827 !important;
+    text-decoration: none !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 0 5px 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    border: none !important;
+    transition: color 0.6s !important;
+}
+
+.lp-miz-card:hover .lp-miz-name,
+.lp-miz-name:hover,
+.lp-miz-name:focus {
+    color: var(--lp-miz-accent) !important;
+    text-decoration: none !important;
+    outline: none !important;
+}
+
+.lp-miz-url {
+    display: block !important;
+    font-size: 12px !important;
+    color: #9ca3af !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    text-decoration: none !important;
+    background: none !important;
+}
+
+/* ===== 描述 ===== */
+.lp-miz-desc {
+    flex: 1 !important;
+    font-size: 13px !important;
+    line-height: 1.65 !important;
+    color: #6b7280 !important;
+    margin: 0 0 14px 0 !important;
+    padding: 0 !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 3 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    background: none !important;
+    border: none !important;
+    text-decoration: none !important;
+}
+
+/* ===== 底部 ===== */
+.lp-miz-footer {
+    display: flex !important;
+    gap: 8px !important;
+    align-items: stretch !important;
+    margin-top: auto !important;
+}
+
+/* 访问按钮 */
+.lp-miz-visit {
+    flex: 1 !important;
+    min-width: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 36px !important;
+    padding: 0 14px !important;
+    border-radius: 8px !important;
+    background: var(--lp-miz-accent) !important;
+    color: #fff !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    border: none !important;
+    cursor: pointer !important;
+    white-space: nowrap !important;
+    font-family: inherit !important;
+    gap: 5px !important;
+}
+
+.lp-miz-visit:hover,
+.lp-miz-visit:focus {
+    background: var(--lp-miz-accent-hover) !important;
+    color: #fff !important;
+    text-decoration: none !important;
+    outline: none !important;
+}
+
+/* 复制按钮（默认：36px 方形图标；.lp-miz-done：展开显示文字） */
+.lp-miz-copy {
+    flex-shrink: 0 !important;
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(0, 0, 0, 0.15) !important;
+    background: #f9fafb !important;
+    color: #6b7280 !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+    white-space: nowrap !important;
+    outline: none !important;
+    transition: width 0.35s cubic-bezier(.4, 0, .2, 1),
+                padding 0.35s cubic-bezier(.4, 0, .2, 1),
+                border-color 0.2s, color 0.2s, background 0.2s !important;
+}
+
+.lp-miz-copy:hover {
+    border-color: var(--lp-miz-accent) !important;
+    color: var(--lp-miz-accent) !important;
+    background: var(--lp-miz-accent-light) !important;
+}
+
+/* 已复制状态：向左展开，flex 容器吸收空间 */
+.lp-miz-copy.lp-miz-done {
+    width: 70px !important;
+    padding: 0 12px !important;
+    border-color: var(--lp-miz-accent) !important;
+    color: var(--lp-miz-accent) !important;
+    background: var(--lp-miz-accent-light) !important;
+}
+
+.lp-miz-copy-text {
+    display: none !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+}
+
+.lp-miz-copy.lp-miz-done .lp-miz-copy-text {
+    display: inline !important;
+}
+
+.lp-miz-copy.lp-miz-done .lp-miz-copy-icon {
+    display: none !important;
+}
+
+[data-theme="dark"] .lp-miz-card,
+body.dark .lp-miz-card,
+body.dark-mode .lp-miz-card,
+body.dark-theme .lp-miz-card,
+body.theme-dark .lp-miz-card,
+html.dark .lp-miz-card,
+html.dark-mode .lp-miz-card,
+html.dark-theme .lp-miz-card,
+html.theme-dark .lp-miz-card {
+    background: #1e2433 !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-theme="dark"] .lp-miz-card:hover,
+body.dark .lp-miz-card:hover,
+body.dark-mode .lp-miz-card:hover,
+body.dark-theme .lp-miz-card:hover,
+body.theme-dark .lp-miz-card:hover,
+html.dark .lp-miz-card:hover,
+html.dark-mode .lp-miz-card:hover,
+html.dark-theme .lp-miz-card:hover,
+html.theme-dark .lp-miz-card:hover {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45) !important;
+}
+
+[data-theme="dark"] .lp-miz-name,
+body.dark .lp-miz-name,
+body.dark-mode .lp-miz-name,
+body.dark-theme .lp-miz-name,
+body.theme-dark .lp-miz-name,
+html.dark .lp-miz-name,
+html.dark-mode .lp-miz-name,
+html.dark-theme .lp-miz-name,
+html.theme-dark .lp-miz-name {
+    color: #e2e8f0 !important;
+}
+
+[data-theme="dark"] .lp-miz-desc,
+body.dark .lp-miz-desc,
+body.dark-mode .lp-miz-desc,
+body.dark-theme .lp-miz-desc,
+body.theme-dark .lp-miz-desc,
+html.dark .lp-miz-desc,
+html.dark-mode .lp-miz-desc,
+html.dark-theme .lp-miz-desc,
+html.theme-dark .lp-miz-desc {
+    color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .lp-miz-url,
+body.dark .lp-miz-url,
+body.dark-mode .lp-miz-url,
+body.dark-theme .lp-miz-url,
+body.theme-dark .lp-miz-url,
+html.dark .lp-miz-url,
+html.dark-mode .lp-miz-url,
+html.dark-theme .lp-miz-url,
+html.theme-dark .lp-miz-url {
+    color: #64748b !important;
+}
+
+[data-theme="dark"] .lp-miz-copy,
+body.dark .lp-miz-copy,
+body.dark-mode .lp-miz-copy,
+body.dark-theme .lp-miz-copy,
+body.theme-dark .lp-miz-copy,
+html.dark .lp-miz-copy,
+html.dark-mode .lp-miz-copy,
+html.dark-theme .lp-miz-copy,
+html.theme-dark .lp-miz-copy {
+    background: #2d3447 !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .lp-miz-copy:hover,
+body.dark .lp-miz-copy:hover,
+body.dark-mode .lp-miz-copy:hover,
+body.dark-theme .lp-miz-copy:hover,
+body.theme-dark .lp-miz-copy:hover,
+html.dark .lp-miz-copy:hover,
+html.dark-mode .lp-miz-copy:hover,
+html.dark-theme .lp-miz-copy:hover,
+html.theme-dark .lp-miz-copy:hover {
+    border-color: var(--lp-miz-accent) !important;
+    color: var(--lp-miz-accent) !important;
+    background: var(--lp-miz-accent-light) !important;
+}

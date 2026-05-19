@@ -2,3 +2,14 @@
 .links-plus-link{display:inline-flex;gap:10px;align-items:center;color:inherit;text-decoration:none}
 .links-plus-avatar{border-radius:10px;border:1px solid rgba(0,0,0,.06)}
 .links-plus-link:hover .links-plus-name{text-decoration:underline}
+[data-theme="dark"] .links-plus-avatar,
+body.dark .links-plus-avatar,
+body.dark-mode .links-plus-avatar,
+body.dark-theme .links-plus-avatar,
+body.theme-dark .links-plus-avatar,
+html.dark .links-plus-avatar,
+html.dark-mode .links-plus-avatar,
+html.dark-theme .links-plus-avatar,
+html.theme-dark .links-plus-avatar{border-color:rgba(255,255,255,.10)}
+[data-theme="dark"] .links-plus-link, body.dark .links-plus-link, body.dark-mode .links-plus-link, body.dark-theme .links-plus-link, body.theme-dark .links-plus-link, html.dark .links-plus-link, html.dark-mode .links-plus-link, html.dark-theme .links-plus-link, html.theme-dark .links-plus-link{color:inherit}
+@media(prefers-color-scheme:dark){.links-plus-avatar{border-color:rgba(255,255,255,.10)}.links-plus-link{color:inherit}}

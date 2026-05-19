@@ -1,0 +1,14 @@
+{
+  "name": "z-fuwari",
+  "title": "Fuwari 复刻",
+  "version": "1.0.0",
+  "description": "Fuwari 主题风格友链卡片，带圆角卡片、oklch 色彩变量、悬浮强调色与右侧访问按钮。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-fw-container"
+  },
+  "inject": {
+    "css": true,
+    "js": true
+  }
+}

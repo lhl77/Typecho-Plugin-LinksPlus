@@ -1,0 +1,14 @@
+{
+  "name": "z-clarity",
+  "title": "Clarity 复刻",
+  "version": "1.0.0",
+  "description": "Clarity 主题风格友链卡片，紧凑网格布局，渐变边框，悬浮详情弹窗，含暗色模式。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-cl-container"
+  },
+  "inject": {
+    "css": true,
+    "js": true
+  }
+}

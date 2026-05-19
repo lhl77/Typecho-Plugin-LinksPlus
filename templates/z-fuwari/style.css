@@ -1,0 +1,222 @@
+/* z-fuwari 主题 - Fuwari 复刻 - LinksPlus 插件专用（v2：图片布局重设计）*/
+
+/* ===== CSS 变量 ===== */
+:root {
+    --lp-fw-hue:               250;
+    --lp-fw-radius:            0.75rem;
+    /* Light mode */
+    --lp-fw-card-bg:           #ffffff;
+    --lp-fw-border:            rgba(0, 0, 0, 0.08);
+    --lp-fw-border-hover:      oklch(0.70 0.14 var(--lp-fw-hue));
+    --lp-fw-primary:           oklch(0.70 0.14 var(--lp-fw-hue));
+    --lp-fw-btn-bg:            oklch(0.95 0.025 var(--lp-fw-hue));
+    --lp-fw-btn-hover:         oklch(0.90 0.05 var(--lp-fw-hue));
+    --lp-fw-tab-active-bg:     oklch(0.70 0.14 var(--lp-fw-hue));
+    --lp-fw-tab-active-text:   #ffffff;
+    --lp-fw-text:              oklch(0.20 0.02 var(--lp-fw-hue));
+    --lp-fw-text-sub:          oklch(0.50 0.03 var(--lp-fw-hue));
+    --lp-fw-tag-bg:            oklch(0.93 0.03 var(--lp-fw-hue));
+    --lp-fw-tag-text:          oklch(0.55 0.10 var(--lp-fw-hue));
+    --lp-fw-shadow:            rgba(0, 0, 0, 0.07);
+    --lp-fw-avatar-bg:         oklch(0.93 0.02 var(--lp-fw-hue));
+}
+
+[data-theme="dark"],
+body.dark,
+body.dark-mode,
+body.dark-theme,
+body.theme-dark,
+html.dark,
+html.dark-mode,
+html.dark-theme,
+html.theme-dark {
+    --lp-fw-card-bg:           oklch(0.23 0.015 var(--lp-fw-hue));
+    --lp-fw-border:            rgba(255, 255, 255, 0.07);
+    --lp-fw-border-hover:      oklch(0.75 0.14 var(--lp-fw-hue));
+    --lp-fw-primary:           oklch(0.75 0.14 var(--lp-fw-hue));
+    --lp-fw-btn-bg:            oklch(0.33 0.035 var(--lp-fw-hue));
+    --lp-fw-btn-hover:         oklch(0.38 0.04 var(--lp-fw-hue));
+    --lp-fw-tab-active-bg:     oklch(0.75 0.14 var(--lp-fw-hue));
+    --lp-fw-tab-active-text:   oklch(0.16 0.014 var(--lp-fw-hue));
+    --lp-fw-text:              oklch(0.88 0.015 var(--lp-fw-hue));
+    --lp-fw-text-sub:          oklch(0.62 0.025 var(--lp-fw-hue));
+    --lp-fw-tag-bg:            oklch(0.30 0.04 var(--lp-fw-hue));
+    --lp-fw-tag-text:          oklch(0.75 0.14 var(--lp-fw-hue));
+    --lp-fw-shadow:            rgba(0, 0, 0, 0.35);
+    --lp-fw-avatar-bg:         oklch(0.20 0.015 var(--lp-fw-hue));
+}
+
+/* ===== 容器：两列网格 ===== */
+.lp-fw-container {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
+    gap: 0.6rem !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+@media (max-width: 480px) {
+    .lp-fw-container {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ===== 入场动画 ===== */
+@keyframes lpFwFadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== 卡片外层（网格项）===== */
+.lp-fw-card {
+    border-radius: var(--lp-fw-radius) !important;
+    overflow: hidden !important;
+    background: var(--lp-fw-card-bg) !important;
+    border: 1px solid var(--lp-fw-border) !important;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease !important;
+    animation: lpFwFadeIn 0.3s both !important;
+    display: block !important;
+}
+
+.lp-fw-card:hover {
+    border-color: var(--lp-fw-border-hover) !important;
+    box-shadow: 0 4px 16px var(--lp-fw-shadow) !important;
+    .lp-fw-avatar {
+        transform: scale(1.08) !important;
+    }
+}
+
+/* ===== 卡片链接：水平 flex，avatar 填满左侧高度 ===== */
+.lp-fw-link {
+    display: flex !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    text-decoration: none !important;
+    color: var(--lp-fw-text) !important;
+    position: relative !important;
+    box-sizing: border-box !important;
+    min-height: 5.5rem !important;
+    outline: none !important;
+    cursor: pointer !important;
+}
+
+.lp-fw-link:hover,
+.lp-fw-link:focus {
+    text-decoration: none !important;
+    color: var(--lp-fw-text) !important;
+    outline: none !important;
+}
+
+/* ===== 头像：div+background-image，margin 产生视觉间距，border-radius 裁圆角 ===== */
+/* 原理：padding 使背景缩至 content-box 但内角无法圆角；                             */
+/*       改用 margin 让 div 自身缩小内嵌，border-radius 直接作用于 border-box，      */
+/*       background-image 被圆角裁切，达到"有间距+圆角图片"效果。                  */
+.lp-fw-avatar {
+    flex-shrink: 0 !important;
+    width: 3.5rem !important;
+    aspect-ratio: 1 / 1 !important;
+    margin: 0.75rem 0 0.75rem 0.75rem !important;
+    align-self: center !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    background-color: var(--lp-fw-avatar-bg) !important;
+    border-radius: 0.4rem !important;
+    transition: transform 0.25s ease !important;
+}
+
+/* ===== 信息区 ===== */
+.lp-fw-body {
+    flex: 1 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    padding: 0.65rem 2.2rem 0.65rem 0.75rem !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.2rem !important;
+    justify-content: center !important;
+}
+
+.lp-fw-name {
+    display: block !important;
+    font-size: 0.92em !important;
+    font-weight: 700 !important;
+    color: var(--lp-fw-text) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    border: none !important;
+    text-decoration: none !important;
+    transition: color 0.18s !important;
+    line-height: 1.35 !important;
+}
+
+.lp-fw-link:hover .lp-fw-name {
+    color: var(--lp-fw-primary) !important;
+}
+
+.lp-fw-desc {
+    display: block !important;
+    font-size: 0.76em !important;
+    line-height: 1.5 !important;
+    color: var(--lp-fw-text-sub) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    background: none !important;
+    border: none !important;
+    text-decoration: none !important;
+}
+
+/* ===== Sort 标签 badge ===== */
+.lp-fw-tag {
+    display: inline-block !important;
+    align-self: flex-start !important;
+    font-size: 0.7em !important;
+    font-weight: 500 !important;
+    padding: 0.1em 0.65em !important;
+    border-radius: 2em !important;
+    background: var(--lp-fw-tag-bg) !important;
+    color: var(--lp-fw-tag-text) !important;
+    line-height: 1.6 !important;
+    margin: 0 !important;
+    white-space: nowrap !important;
+    text-decoration: none !important;
+    border: none !important;
+    max-width: 8em !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+.lp-fw-tag:empty {
+    display: none !important;
+}
+
+/* ===== 右上角箭头图标 ===== */
+.lp-fw-arrow {
+    position: absolute !important;
+    top: 0.5rem !important;
+    right: 0.5rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+    border-radius: 0.35rem !important;
+    color: var(--lp-fw-text-sub) !important;
+    opacity: 0.4 !important;
+    transition: opacity 0.18s, color 0.18s !important;
+    pointer-events: none !important;
+    background: none !important;
+}
+
+.lp-fw-link:hover .lp-fw-arrow {
+    opacity: 1 !important;
+    color: var(--lp-fw-primary) !important;
+}

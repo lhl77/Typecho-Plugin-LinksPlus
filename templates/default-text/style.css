@@ -1,3 +1,13 @@
 .links-plus-item{list-style:none;margin:8px 0}
 .links-plus-link{color:inherit;text-decoration:none}
 .links-plus-link:hover{text-decoration:underline}
+[data-theme="dark"] .links-plus-link,
+body.dark .links-plus-link,
+body.dark-mode .links-plus-link,
+body.dark-theme .links-plus-link,
+body.theme-dark .links-plus-link,
+html.dark .links-plus-link,
+html.dark-mode .links-plus-link,
+html.dark-theme .links-plus-link,
+html.theme-dark .links-plus-link{color:inherit}
+@media(prefers-color-scheme:dark){.links-plus-link{color:inherit}}

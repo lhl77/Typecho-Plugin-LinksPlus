@@ -1,0 +1,152 @@
+/* z-mirages 主题友链样式 - LinksPlus 插件专用 */
+
+.lp-zm-link-box {
+    display: inline-block;
+    width: 150px;
+    margin: 10px;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.lp-zm-link-box a {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    height: 100%;
+}
+
+.lp-zm-link-box a:hover {
+    text-decoration: none;
+}
+
+
+.lp-zm-link-box .lp-zm-thumb {
+    width: 100%;
+    height: 150px;
+    background: #f5f5f5 no-repeat center center/cover;
+    transition: transform 0.3s cubic-bezier(.4,0,.2,1), box-shadow 0.3s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.10);
+    position: relative;
+}
+
+/* .lp-zm-link-box a:hover .lp-zm-thumb {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+} */
+
+.lp-zm-link-box .lp-zm-content {
+    padding: 1rem .25rem;
+    background: #fff;
+}
+
+.lp-zm-link-box .lp-zm-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-align:center;
+}
+
+.lp-zm-link-box a:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+[data-theme="dark"] .lp-zm-link-box,
+body.dark .lp-zm-link-box,
+body.dark-mode .lp-zm-link-box,
+body.dark-theme .lp-zm-link-box,
+body.theme-dark .lp-zm-link-box,
+html.dark .lp-zm-link-box,
+html.dark-mode .lp-zm-link-box,
+html.dark-theme .lp-zm-link-box,
+html.theme-dark .lp-zm-link-box {
+    background: #25252e;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.36), 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"] .lp-zm-link-box .lp-zm-thumb,
+body.dark .lp-zm-link-box .lp-zm-thumb,
+body.dark-mode .lp-zm-link-box .lp-zm-thumb,
+body.dark-theme .lp-zm-link-box .lp-zm-thumb,
+body.theme-dark .lp-zm-link-box .lp-zm-thumb,
+html.dark .lp-zm-link-box .lp-zm-thumb,
+html.dark-mode .lp-zm-link-box .lp-zm-thumb,
+html.dark-theme .lp-zm-link-box .lp-zm-thumb,
+html.theme-dark .lp-zm-link-box .lp-zm-thumb {
+    background: #1a1a23;
+}
+
+[data-theme="dark"] .lp-zm-link-box .lp-zm-content,
+body.dark .lp-zm-link-box .lp-zm-content,
+body.dark-mode .lp-zm-link-box .lp-zm-content,
+body.dark-theme .lp-zm-link-box .lp-zm-content,
+body.theme-dark .lp-zm-link-box .lp-zm-content,
+html.dark .lp-zm-link-box .lp-zm-content,
+html.dark-mode .lp-zm-link-box .lp-zm-content,
+html.dark-theme .lp-zm-link-box .lp-zm-content,
+html.theme-dark .lp-zm-link-box .lp-zm-content {
+    background: #2b2a35;
+}
+
+[data-theme="dark"] .lp-zm-link-box .lp-zm-title,
+body.dark .lp-zm-link-box .lp-zm-title,
+body.dark-mode .lp-zm-link-box .lp-zm-title,
+body.dark-theme .lp-zm-link-box .lp-zm-title,
+body.theme-dark .lp-zm-link-box .lp-zm-title,
+html.dark .lp-zm-link-box .lp-zm-title,
+html.dark-mode .lp-zm-link-box .lp-zm-title,
+html.dark-theme .lp-zm-link-box .lp-zm-title,
+html.theme-dark .lp-zm-link-box .lp-zm-title {
+    color: #e5e5e5;
+}
+
+[data-theme="dark"] .lp-zm-link-box a:hover,
+body.dark .lp-zm-link-box a:hover,
+body.dark-mode .lp-zm-link-box a:hover,
+body.dark-theme .lp-zm-link-box a:hover,
+body.theme-dark .lp-zm-link-box a:hover,
+html.dark .lp-zm-link-box a:hover,
+html.dark-mode .lp-zm-link-box a:hover,
+html.dark-theme .lp-zm-link-box a:hover,
+html.theme-dark .lp-zm-link-box a:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.45), 0 8px 16px rgba(0, 0, 0, 0.36);
+}
+
+/* 响应式布局 */
+@media (max-width: 768px) {
+    .lp-zm-link-box {
+        width: 160px;
+        margin: 8px;
+    }
+    
+    .lp-zm-link-box .lp-zm-thumb {
+        height: 160px;
+    }
+    
+    .lp-zm-link-box .lp-zm-title {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .lp-zm-link-box {
+        width: 140px;
+        margin: 6px;
+    }
+    
+    .lp-zm-link-box .lp-zm-thumb {
+        height: 140px;
+    }
+    
+    .lp-zm-link-box .lp-zm-title {
+        font-size: 12px;
+    }
+}

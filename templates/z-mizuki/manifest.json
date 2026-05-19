@@ -1,0 +1,15 @@
+{
+  "name": "z-mizuki",
+  "title": "Mizuki 复刻",
+  "version": "1.1.0",
+  "description": "Mizuki 主题风格友链卡片，含搜索过滤、渐变强调色、入场动画、复制按钮。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-miz-container"
+  },
+  "inject": {
+    "css": true,
+    "js": true
+  }
+}
+

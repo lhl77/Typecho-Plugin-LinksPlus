@@ -1,0 +1,14 @@
+{
+  "name": "z-fluid",
+  "title": "Fluid 复刻",
+  "version": "1.0.0",
+  "description": "Fluid 主题风格友链卡片，圆形头像 + 名称/描述横排布局，响应式三列网格。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-fluid-container"
+  },
+  "inject": {
+    "css": true,
+    "js": false
+  }
+}

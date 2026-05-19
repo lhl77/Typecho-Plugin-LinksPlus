@@ -1,0 +1,14 @@
+{
+  "name": "z-sinner",
+  "title": "Sinner 复刻",
+  "version": "1.0.0",
+  "description": "Sinner 主题风格友链卡片，暗色圆角卡片，右下角半透明头像装饰，hover 上浮 + 名称变红。",
+  "wrapper": {
+    "tag": "div",
+    "class": "lp-sinner-container"
+  },
+  "inject": {
+    "css": true,
+    "js": false
+  }
+}

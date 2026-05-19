@@ -1,0 +1,216 @@
+/* z-sinner 主题友链样式 - LinksPlus 插件专用 */
+
+.lp-sinner-container {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 12px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    list-style: none !important;
+}
+
+@media (max-width: 900px) {
+    .lp-sinner-container {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+}
+
+@media (max-width: 500px) {
+    .lp-sinner-container {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+.lp-sinner-card {
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 14px !important;
+    padding: 16px !important;
+    background: #f0f4fa !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+    overflow: hidden !important;
+    transition: transform 0.25s cubic-bezier(.4, 0, .2, 1),
+                box-shadow 0.25s cubic-bezier(.4, 0, .2, 1),
+                border-color 0.25s !important;
+    transform: translateY(0) !important;
+    will-change: transform !important;
+    box-sizing: border-box !important;
+    min-width: 200px !important;
+}
+
+.lp-sinner-card:hover {
+    transform: translateY(-4px) !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+    border-color: rgba(0, 0, 0, 0.18) !important;
+}
+
+[data-theme="dark"] .lp-sinner-card,
+body.dark .lp-sinner-card,
+body.dark-mode .lp-sinner-card,
+body.dark-theme .lp-sinner-card,
+body.theme-dark .lp-sinner-card,
+html.dark .lp-sinner-card,
+html.dark-mode .lp-sinner-card,
+html.dark-theme .lp-sinner-card,
+html.theme-dark .lp-sinner-card {
+    background: #1e2433 !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-theme="dark"] .lp-sinner-card:hover,
+body.dark .lp-sinner-card:hover,
+body.dark-mode .lp-sinner-card:hover,
+body.dark-theme .lp-sinner-card:hover,
+body.theme-dark .lp-sinner-card:hover,
+html.dark .lp-sinner-card:hover,
+html.dark-mode .lp-sinner-card:hover,
+html.dark-theme .lp-sinner-card:hover,
+html.theme-dark .lp-sinner-card:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* 右下角半透明背景头像 */
+.lp-sinner-bg-avatar {
+    position: absolute !important;
+    right: -14px !important;
+    bottom: -14px !important;
+    width: 80px !important;
+    height: 80px !important;
+    border-radius: 50% !important;
+    opacity: 0.12 !important;
+    pointer-events: none !important;
+    filter: blur(1px) !important;
+    transition: opacity 0.25s !important;
+    z-index: 0 !important;
+}
+
+.lp-sinner-card:hover .lp-sinner-bg-avatar {
+    opacity: 0.2 !important;
+}
+
+/* 头像链接 */
+.lp-sinner-avatar-link {
+    flex-shrink: 0 !important;
+    display: block !important;
+    width: 52px !important;
+    height: 52px !important;
+    border-radius: 50% !important;
+    position: relative !important;
+    z-index: 1 !important;
+    text-decoration: none !important;
+    outline: none !important;
+}
+
+/* 圆形头像 */
+.lp-sinner-avatar {
+    width: 52px !important;
+    height: 52px !important;
+    border-radius: 50% !important;
+    background: #2d3447 no-repeat center center / cover !important;
+    display: block !important;
+    transition: transform 0.25s cubic-bezier(.4, 0, .2, 1) !important;
+    transform: scale(1) !important;
+    will-change: transform !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
+}
+
+.lp-sinner-card:hover .lp-sinner-avatar {
+    transform: scale(1.08) !important;
+}
+
+/* 文字区域 */
+.lp-sinner-info {
+    flex: 1 !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* 名称链接 */
+.lp-sinner-name {
+    display: block !important;
+    margin: 0 0 5px 0 !important;
+    padding: 0 !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    line-height: 1.3 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: #1e2433 !important;
+    text-decoration: none !important;
+    background: none !important;
+    border: none !important;
+    transition: color 0.2s !important;
+}
+
+.lp-sinner-card:hover .lp-sinner-name {
+    color: #ef4444 !important;
+    text-decoration: none !important;
+}
+
+.lp-sinner-name:hover,
+.lp-sinner-name:focus {
+    color: #ef4444 !important;
+    text-decoration: none !important;
+    outline: none !important;
+}
+
+[data-theme="dark"] .lp-sinner-name,
+body.dark .lp-sinner-name,
+body.dark-mode .lp-sinner-name,
+body.dark-theme .lp-sinner-name,
+body.theme-dark .lp-sinner-name,
+html.dark .lp-sinner-name,
+html.dark-mode .lp-sinner-name,
+html.dark-theme .lp-sinner-name,
+html.theme-dark .lp-sinner-name {
+    color: #e2e8f0 !important;
+}
+
+/* 描述文字 */
+.lp-sinner-desc {
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    line-height: 1.5 !important;
+    color: #64748b !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    background: none !important;
+    border: none !important;
+    text-decoration: none !important;
+}
+
+[data-theme="dark"] .lp-sinner-desc,
+body.dark .lp-sinner-desc,
+body.dark-mode .lp-sinner-desc,
+body.dark-theme .lp-sinner-desc,
+body.theme-dark .lp-sinner-desc,
+html.dark .lp-sinner-desc,
+html.dark-mode .lp-sinner-desc,
+html.dark-theme .lp-sinner-desc,
+html.theme-dark .lp-sinner-desc {
+    color: #7c8aa0 !important;
+}
+
+[data-theme="dark"] .lp-sinner-bg-avatar,
+body.dark .lp-sinner-bg-avatar,
+body.dark-mode .lp-sinner-bg-avatar,
+body.dark-theme .lp-sinner-bg-avatar,
+body.theme-dark .lp-sinner-bg-avatar,
+html.dark .lp-sinner-bg-avatar,
+html.dark-mode .lp-sinner-bg-avatar,
+html.dark-theme .lp-sinner-bg-avatar,
+html.theme-dark .lp-sinner-bg-avatar {
+    opacity: 0.18 !important;
+}
