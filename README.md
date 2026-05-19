@@ -1,8 +1,6 @@
 # Typecho 插件：Links+（友链管理增强版）
 
 [![Latest tag](https://img.shields.io/github/v/tag/lhl77/Typecho-Plugin-LinksPlus?label=tag&sort=semver)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/tags)
-[![Release](https://img.shields.io/github/v/release/lhl77/Typecho-Plugin-LinksPlus?label=release&sort=semver)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/releases)
-[![Stars](https://img.shields.io/github/stars/lhl77/Typecho-Plugin-LinksPlus?style=flat)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/stargazers)
 [![License](https://img.shields.io/github/license/lhl77/Typecho-Plugin-LinksPlus)](https://github.com/lhl77/Typecho-Plugin-LinksPlus/blob/main/LICENSE)
 [![Typecho](https://img.shields.io/badge/Typecho-Plugin-blue)](https://typecho.org/)
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D7.2-777bb4?logo=php&logoColor=white)](https://www.php.net/)
