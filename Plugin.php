@@ -5,8 +5,11 @@
  * 
  * @package Links+
  * @author LHL
- * @version 1.4.0
+ * @version 1.4.1
  * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
+ * 
+ * version 1.4.1 at 2026-05-22 by LHL
+ * 修复 PJAX 兼容的一些问题
  * 
  * version 1.4.0 at 2026-05-19 by LHL
  * 优化 友情链接管理界面显示为md3卡片，移动端下体验良好
@@ -204,9 +207,72 @@ class Links_Plugin implements Typecho_Plugin_Interface
     }
 
     /**
+     * 在 <head> 中直接注入模板 CSS（由 Widget_Archive->header 钩子触发）。
+     * 因为 <head> 不被 PJAX 替换，CSS 在所有 PJAX 导航中永久生效，
+     * 从而彻底解决"首次 PJAX 进入友链页只有文字"的问题。
+     */
+    public static function injectHeadAssets($header, $widget)
+    {
+        static $done = false;
+        if ($done) return;
+        $done = true;
+
+        $options = Typecho_Widget::widget('Widget_Options');
+        if (!isset($options->plugins['activated']['Links'])) {
+            return;
+        }
+        $settings = $options->plugin('Links');
+
+        // 收集插件设置中所有已配置的模板名称
+        $tplKeys  = array('template_text', 'template_img', 'template_mix');
+        $tplNames = array();
+        foreach ($tplKeys as $key) {
+            $v = isset($settings->$key) ? trim((string)$settings->$key) : '';
+            if ($v !== '') {
+                $tplNames[$v] = true;
+            }
+        }
+
+        if (empty($tplNames)) {
+            return;
+        }
+
+        $templates = self::listTemplates();
+        $rawDark   = isset($settings->apply_dark_classes)  ? trim((string)$settings->apply_dark_classes)  : '';
+        $rawLight  = isset($settings->apply_light_classes) ? trim((string)$settings->apply_light_classes) : '';
+
+        foreach (array_keys($tplNames) as $tplName) {
+            if (!isset($templates[$tplName])) {
+                continue;
+            }
+            $manifest = $templates[$tplName];
+            $inject   = isset($manifest['inject']) && is_array($manifest['inject']) ? $manifest['inject'] : array();
+            if (empty($inject['css'])) {
+                continue;
+            }
+
+            $css = self::readTemplateFile($tplName, 'style.css');
+            if (!$css || trim($css) === '') {
+                continue;
+            }
+
+            $id = 'links-plus-tpl-' . htmlspecialchars($tplName, ENT_QUOTES, 'UTF-8');
+            echo '<style id="' . $id . '">' . $css . "</style>\n";
+
+            // 同步注入暗色覆盖 CSS（与 injectCustomDarkOverrideOnce 使用相同 id）
+            $darkCss  = self::buildTemplateLpThemeAliasCss($css);
+            $darkCss .= self::buildCustomDarkCssOverride($css, $rawDark, $rawLight);
+            if ($darkCss !== '') {
+                $darkId = 'links-plus-tpl-' . htmlspecialchars($tplName, ENT_QUOTES, 'UTF-8') . '-cdark';
+                echo '<style id="' . $darkId . '">' . $darkCss . "</style>\n";
+            }
+        }
+    }
+
+    /**
      * 注入模板 CSS/JS（同一模板同一请求只注入一次）
      */
-    public static function injectTemplateAssetsOnce($templateName, array $manifest)
+    public static function injectTemplateAssetsOnce($templateName, array $manifest, $ajaxCompatMode = 'default')
     {
         static $injected = array();
         $key = 'tpl:' . $templateName;
@@ -217,20 +283,73 @@ class Links_Plugin implements Typecho_Plugin_Interface
 
         $inject = isset($manifest['inject']) && is_array($manifest['inject']) ? $manifest['inject'] : array();
         $injectCss = !empty($inject['css']);
-        $injectJs = !empty($inject['js']);
+        $injectJs  = !empty($inject['js']);
+        $pjaxMode  = ($ajaxCompatMode === 'force_pjax');
 
         if ($injectCss) {
             $css = self::readTemplateFile($templateName, 'style.css');
             if ($css && trim($css) !== '') {
-                echo '<style id="links-plus-tpl-' . htmlspecialchars($templateName, ENT_QUOTES, 'UTF-8') . '">' . $css . '</style>';
+                self::echoStyleTag('links-plus-tpl-' . $templateName, $css, $pjaxMode);
             }
         }
 
         if ($injectJs) {
             $js = self::readTemplateFile($templateName, 'script.js');
             if ($js && trim($js) !== '') {
-                echo '<script id="links-plus-tpl-' . htmlspecialchars($templateName, ENT_QUOTES, 'UTF-8') . '">' . $js . '</script>';
+                self::echoScriptTag('links-plus-tpl-' . $templateName, $js, $pjaxMode);
             }
+        }
+    }
+
+    /**
+     * 输出 <style> 注入：始终通过 <script> 将样式持久化到 <head>，
+     * 并注册常见 PJAX 事件监听，确保 PJAX 导航后自动重新注入。
+     * $pjaxMode 参数保留以兼容旧调用，不再影响行为。
+     */
+    private static function echoStyleTag($id, $css, $pjaxMode = false)
+    {
+        $idEsc   = htmlspecialchars($id, ENT_QUOTES, 'UTF-8');
+        $idJson  = json_encode($id);
+        $cssJson = json_encode($css);
+        $lKey    = json_encode('__lpCssL_' . preg_replace('/[^a-zA-Z0-9]/', '_', $id));
+
+        // 1. 直接输出 <style> 标签：PJAX 通过 innerHTML 替换容器时会立即应用（jquery.pjax
+        //    等库不执行内联 <script> 但会应用 <style>），确保首次 PJAX 导航到友链页有样式。
+        echo '<style id="' . $idEsc . '">' . $css . "</style>\n";
+
+        // 2. 输出 <script> 将样式迁移到 <head>（持久化，防止导航离开后 CSS 随容器消失），
+        //    同时注册 PJAX 事件监听器（PJAX 执行脚本时生效）。
+        //    inj() 检测到 <style> 已在 <head> 则跳过；在 body 中则移至 <head>。
+        echo '<script>(function(){'
+            . 'var i=' . $idJson . ';'
+            . 'var c=' . $cssJson . ';'
+            . 'function inj(){'
+            .   'var el=document.getElementById(i);'
+            .   'if(el&&el.parentNode===document.head)return;'
+            .   'if(el)el.parentNode.removeChild(el);'
+            .   'var s=document.createElement("style");s.id=i;s.textContent=c;'
+            .   '(document.head||document.documentElement).appendChild(s);'
+            . '}'
+            . 'inj();'
+            . 'var lk=' . $lKey . ';'
+            . 'if(!window[lk]){window[lk]=true;'
+            . 'var ee=["pjax:end","pjax:success","pjax:complete","turbo:load","turbolinks:load","swup:pageView","barba:after-enter"];'
+            . 'ee.forEach(function(e){document.addEventListener(e,inj);window.addEventListener(e,inj);});}'
+            . '})()</script>';
+    }
+
+    /**
+     * 输出 <script> 注入：force_pjax 模式时加全局 flag 防止 PJAX 多次导航重复执行，
+     * 否则直接输出 <script id="...">。
+     */
+    private static function echoScriptTag($id, $js, $pjaxMode = false)
+    {
+        if ($pjaxMode) {
+            $key = '__lpInit_' . preg_replace('/[^a-zA-Z0-9]/', '_', $id);
+            echo '<script>(function(){var k=' . json_encode($key)
+                . ';if(window[k])return;window[k]=true;' . $js . '})()</script>';
+        } else {
+            echo '<script id="' . htmlspecialchars($id, ENT_QUOTES, 'UTF-8') . '">' . $js . '</script>';
         }
     }
 
@@ -244,7 +363,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
      * @param array  $manifest     模板 manifest 数组
      * @param object $settings     插件设置对象
      */
-    public static function injectCustomDarkOverrideOnce($templateName, array $manifest, $settings)
+    public static function injectCustomDarkOverrideOnce($templateName, array $manifest, $settings, $ajaxCompatMode = 'default')
     {
         static $injected = array();
         $key = 'cdark:' . $templateName;
@@ -275,8 +394,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
         }
 
         $injected[$key] = true;
-        echo '<style id="links-plus-tpl-' . htmlspecialchars($templateName, ENT_QUOTES, 'UTF-8') . '-cdark">'
-            . $allCss . '</style>';
+        self::echoStyleTag('links-plus-tpl-' . $templateName . '-cdark', $allCss, $ajaxCompatMode === 'force_pjax');
     }
 
     /**
@@ -595,6 +713,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
     {
         $options = Typecho_Widget::widget('Widget_Options');
         $settings = $options->plugin('Links');
+        $ajaxCompatMode = isset($settings->ajax_compat_mode) ? (string)$settings->ajax_compat_mode : 'default';
         if (!self::shouldRenderApplyForm($context, $settings)) {
             return '';
         }
@@ -815,8 +934,24 @@ class Links_Plugin implements Typecho_Plugin_Interface
                 .   'setupPopups();'
                 . '}'
                 . 'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",init);}else{init();}'
+                . ($ajaxCompatMode === 'force_pjax' ? 'var _lpPE=["pjax:end","pjax:success","pjax:complete","turbo:load","turbolinks:load","swup:pageView","barba:after-enter"];_lpPE.forEach(function(e){document.addEventListener(e,init);window.addEventListener(e,init);});' : '')
                 . '})();'
                 . '</script>';
+            // 将 apply form <style> 保留并在其后追加 <script>，
+            // <style> 确保 PJAX 通过 innerHTML 替换时 CSS 立即生效，
+            // <script> 将样式迁移到 <head> 并注册 PJAX 重注入监听。
+            if (preg_match('/<style id="links-plus-apply-style">(.*?)<\/style>/s', $assetsBlock, $_m)) {
+                $_cssCnt = $_m[1];
+                $_cssJ   = json_encode($_cssCnt);
+                $_jsInj  = $_m[0] . '<script>(function(){'
+                    . 'var i="links-plus-apply-style";var c=' . $_cssJ . ';'
+                    . 'function inj(){var el=document.getElementById(i);if(el&&el.parentNode===document.head)return;if(el)el.parentNode.removeChild(el);var s=document.createElement("style");s.id=i;s.textContent=c;(document.head||document.documentElement).appendChild(s);}'
+                    . 'inj();'
+                    . 'var lk="__lpCssL_apply";'
+                    . 'if(!window[lk]){window[lk]=true;var ee=["pjax:end","pjax:success","pjax:complete","turbo:load","turbolinks:load","swup:pageView","barba:after-enter"];ee.forEach(function(e){document.addEventListener(e,inj);window.addEventListener(e,inj);});}'
+                    . '})()</script>';
+                $assetsBlock = str_replace($_m[0], $_jsInj, $assetsBlock);
+            }
         }
 
         $actionEsc     = htmlspecialchars($actionUrl,        ENT_QUOTES, 'UTF-8');
@@ -923,6 +1058,8 @@ class Links_Plugin implements Typecho_Plugin_Interface
         Typecho_Plugin::factory('Widget_Abstract_Comments')->contentEx = array('Links_Plugin', 'parse');
         Typecho_Plugin::factory('admin/write-post.php')->bottom = array('Links_Plugin', 'renderEditorTool');
         Typecho_Plugin::factory('admin/write-page.php')->bottom = array('Links_Plugin', 'renderEditorTool');
+        // 在 <head> 中预注入模板 CSS，确保 PJAX 导航时 CSS 始终可用
+        Typecho_Plugin::factory('Widget_Archive')->header = array('Links_Plugin', 'injectHeadAssets');
         // Typecho_Plugin::factory('Widget_Archive')->callLinks = array('Links_Plugin', 'output_str');
         return _t($info);
     }
@@ -976,6 +1113,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
             'Widget_Abstract_Contents:contentEx' => _t('正文解析 contentEx'),
             'Widget_Abstract_Contents:excerptEx' => _t('摘要解析 excerptEx'),
             'Widget_Abstract_Comments:contentEx' => _t('评论解析 contentEx'),
+            'Widget_Archive:header' => _t('前台 head 资源注入 header（PJAX 兼容）'),
             'admin/write-post.php:bottom' => _t('文章编辑器按钮'),
             'admin/write-page.php:bottom' => _t('页面编辑器按钮'),
         );
@@ -1022,6 +1160,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
             'Widget_Abstract_Contents:contentEx'  => 'Links_Plugin',
             'Widget_Abstract_Contents:excerptEx'  => 'Links_Plugin',
             'Widget_Abstract_Comments:contentEx'  => 'Links_Plugin',
+            'Widget_Archive:header'              => 'Links_Plugin',
             'admin/write-post.php:bottom'         => 'Links_Plugin',
             'admin/write-page.php:bottom'         => 'Links_Plugin',
         );
@@ -1748,6 +1887,28 @@ html.dark .md3-fold-body,
 html.dark-mode .md3-fold-body {
     border-top-color: rgba(255,255,255,.1);
 }
+
+.lp-pjax-pre {
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 0 0 8px;
+    color: #1f2937;
+    border: 1px solid rgba(0,0,0,.06);
+}
+
+[data-theme="dark"] .lp-pjax-pre,
+body.dark .lp-pjax-pre,
+body.dark-mode .lp-pjax-pre,
+html.dark .lp-pjax-pre,
+html.dark-mode .lp-pjax-pre {
+    background: #131720;
+    color: #c8d6ee;
+    border-color: rgba(255,255,255,.1);
+}
     </style>
 '
 . self::renderRuntimeHookNotice()
@@ -1756,7 +1917,7 @@ html.dark-mode .md3-fold-body {
 (function(){
     var REPO = "lhl77/Typecho-Plugin-LinksPlus";
     // 当前版本（按 tag 口径对比）
-    var CURRENT = "v1.4.0";
+    var CURRENT = "v1.4.1";
 
     function normalizeTag(tag){
         tag = (tag || "").toString().trim();
@@ -3048,29 +3209,28 @@ SCRIPT;
         $ajaxCompat = new Typecho_Widget_Helper_Form_Element_Select(
             'ajax_compat_mode',
             array(
-                'default' => _t('默认（自动检测）'),
-                'force_pjax' => _t('强制开启 PJAX 重载兼容'),
-                'manual' => _t('手动指定函数（需要读取代码）')
+                'default' => _t('默认'),
+                'force_pjax' => _t('PJAX 兼容（推荐）'),
+                'manual' => _t('手动（高级）')
             ),
             'default',
             _t('AJAX 兼容性模式'),
-            _t('用于处理主题的 PJAX/AJAX 加载。如遇到动态加载后友链不显示，可调整此项。')
+            _t('主题开启了 PJAX 且友链显示异常时，请选择「PJAX 兼容」。CSS 样式始终会注入到 &lt;head&gt; 并在 PJAX 导航后自动恢复；「PJAX 兼容」模式还会让申请表单在 PJAX 导航后自动重新初始化。')
         );
         $form->addInput($ajaxCompat);
 
-        // PJAX 重载函数名列表卡片
+        // PJAX 兼容说明卡片
         $pjaxFuncsCard = new Typecho_Widget_Helper_Layout('div', array('class' => 'md3-card'));
         $pjaxFuncsCard->html(
-            '<div class="md3-title">PJAX 重载函数名参考</div>' .
-            '<div class="md3-body" style="font-size: 13px; line-height: 1.8;">' .
-            '<p>若主题使用了 PJAX 动态加载，需要在主题 JS 中手动调用相应函数重新初始化友链。常见的重载函数名：</p>' .
-            '<ul style="margin: 8px 0 0 24px;">' .
-            '<li><span class="field-tag">initLinks()</span> / <span class="field-tag">Links.init()</span> - 通用初始化</li>' .
-            '<li><span class="field-tag">renderLinks()</span> - 重新渲染友链</li>' .
-            '<li><span class="field-tag">loadLinks()</span> - 加载友链</li>' .
-            '<li><span class="field-tag">window.addEventListener(\'pjax:end\', callback)</span> - PJAX 事件钩子</li>' .
-            '</ul>' .
-            '<p style="margin-top: 12px; color: #6b7280;">⚠️ 具体函数名需根据你的主题源码确认。建议在浏览器开发者工具（F12）的 Console 标签页测试。</p>' .
+            '<div class="md3-title">PJAX 兼容说明</div>' .
+            '<div class="md3-body" style="font-size: 13px; line-height: 1.9;">' .
+            '<p style="margin-bottom:8px"><strong>CSS 样式</strong>：插件 CSS 始终注入到页面 <code>&lt;head&gt;</code>，并监听 <code>pjax:end</code>、<code>turbo:load</code>、<code>swup:pageView</code> 等常见 PJAX 事件自动恢复，<strong>通常无需在主题的「PJAX RELOAD」框填写任何代码</strong>。</p>' .
+            '<p style="margin-bottom:8px"><strong>申请表单 JS</strong>：选择「PJAX 兼容」模式后，表单也会监听上述事件自动重新初始化。</p>' .
+            '<p style="margin-bottom:6px"><strong>若主题 PJAX 使用了自定义事件名</strong>（不在以上列表内），可在主题的「PJAX RELOAD」设置框中填入以下代码，手动触发表单重置：</p>' .
+            '<pre class="lp-pjax-pre">' .
+            'document.querySelectorAll(\'form[data-lp-ajax]\')' . "\n" .
+            '  .forEach(function(f) { f._lpSet = false; });</pre>' .
+            '<p style="font-size:12px">⚠ 上方代码仅用于申请表单重新绑定；模板 CSS 与 JS 无需额外处理。</p>' .
             '</div>'
         );
         $form->addItem($pjaxFuncsCard);
@@ -3216,7 +3376,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     mountFold('AJAX 兼容', [
         findOptionByName('ajax_compat_mode'),
-        findCardByTitle('PJAX 重载函数名参考')
+        findCardByTitle('PJAX 兼容说明')
     ], false);
 
     // SMTP 字段随驱动选择显示/隐藏
@@ -3662,10 +3822,20 @@ SCRIPT;
         // 注入模板资源：
         // - pattern = TPL:xxx
         // - 或 SHOW_* 映射到 template_text/img/mix 时同样需要注入
+        $ajaxCompatMode = isset($settings->ajax_compat_mode) ? (string)$settings->ajax_compat_mode : 'default';
+        $assetHtml = '';
         if (!empty($tplName) && !empty($tplManifest) && is_array($tplManifest)) {
-            self::injectTemplateAssetsOnce($tplName, $tplManifest);
-            // 为模板 CSS 追加用户自定义亮/暗 class 的等效规则
-            self::injectCustomDarkOverrideOnce($tplName, $tplManifest, $settings);
+            if ($mode == 'HTML') {
+                ob_start();
+                self::injectTemplateAssetsOnce($tplName, $tplManifest, $ajaxCompatMode);
+                // 为模板 CSS 追加用户自定义亮/暗 class 的等效规则
+                self::injectCustomDarkOverrideOnce($tplName, $tplManifest, $settings, $ajaxCompatMode);
+                $assetHtml = ob_get_clean();
+            } else {
+                self::injectTemplateAssetsOnce($tplName, $tplManifest, $ajaxCompatMode);
+                // 为模板 CSS 追加用户自定义亮/暗 class 的等效规则
+                self::injectCustomDarkOverrideOnce($tplName, $tplManifest, $settings, $ajaxCompatMode);
+            }
         }
 
         // 将本次渲染的模板传给 apply form（供"跟随模板"选项使用）
@@ -3674,7 +3844,7 @@ SCRIPT;
         $applyHtml = self::renderApplyFormHtml($context);
 
         if ($mode == 'HTML') {
-            return $str . $applyHtml;
+            return $assetHtml . $str . $applyHtml;
         } else {
             echo $str;
             if ($applyHtml !== '') {

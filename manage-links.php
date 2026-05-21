@@ -366,20 +366,20 @@ include 'menu.php';
             .lp-card-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-                gap: 16px;
+                gap: 10px;
                 align-items: stretch;
             }
             .lp-link-card {
                 position: relative;
                 display: flex;
                 flex-direction: column;
-                gap: 12px;
+                gap: 0;
                 min-width: 0;
-                padding: 14px;
+                padding: 10px 12px 18px;
                 border: 1px solid var(--md-outline-variant);
-                border-radius: 16px;
+                border-radius: 14px;
                 background: #fff;
-                box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 18px rgba(0,0,0,.05);
+                box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.04);
                 transition: transform .18s, box-shadow .18s, border-color .18s, background-color .18s;
             }
             .lp-link-card[hidden] {
@@ -404,24 +404,23 @@ include 'menu.php';
             }
             .lp-link-card-head {
                 display: flex;
-                align-items: flex-start;
-                gap: 10px;
+                align-items: center;
+                gap: 8px;
                 min-width: 0;
             }
             .lp-link-card-check {
                 display: flex;
                 align-items: center;
-                padding-top: 4px;
             }
             .lp-link-card-check input {
                 margin: 0;
             }
             .lp-link-card-avatar {
-                width: 40px;
-                height: 40px;
+                width: 34px;
+                height: 34px;
                 flex-shrink: 0;
                 overflow: hidden;
-                border-radius: 12px;
+                border-radius: 8px;
                 border: 1px solid rgba(0,0,0,.08);
                 background: #f3f4f6;
             }
@@ -436,30 +435,33 @@ include 'menu.php';
                 min-width: 0;
                 display: flex;
                 flex-direction: column;
-                gap: 6px;
+                gap: 3px;
             }
             .lp-link-card-title-row {
                 display: flex;
-                align-items: flex-start;
+                align-items: center;
                 justify-content: space-between;
-                gap: 8px;
+                gap: 6px;
             }
             .lp-link-card-title {
                 font-size: 14px;
                 font-weight: 700;
-                line-height: 1.4;
+                line-height: 1.3;
                 color: #111827;
                 text-decoration: none;
                 word-break: break-word;
+                flex: 1;
+                min-width: 0;
             }
             .lp-link-card-url {
                 display: block;
                 color: #6b7280;
-                font-size: 13px;
-                line-height: 1.55;
+                font-size: 12px;
+                line-height: 1.4;
                 text-decoration: none;
-                overflow-wrap: anywhere;
-                word-break: break-word;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             .lp-link-card-url:hover {
                 color: #374151;
@@ -468,13 +470,13 @@ include 'menu.php';
             .lp-link-card-meta {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 6px;
+                gap: 4px;
                 align-items: center;
             }
             .lp-card-chip {
                 display: inline-flex;
                 align-items: center;
-                padding: 2px 8px;
+                padding: 1px 6px;
                 border-radius: 999px;
                 background: var(--md-surface-container);
                 color: #4b5563;
@@ -484,37 +486,34 @@ include 'menu.php';
                 word-break: break-word;
             }
             .lp-link-card-hint-slot {
-                min-height: 20px;
+                min-height: 0;
             }
             .lp-link-card-hint-slot .link-check-hint {
                 margin-left: 0;
             }
-            .lp-link-card-actions {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 10px;
-                margin-top: auto;
-            }
+            /* 操作按钮组（已移至标题行） */
             .lp-link-card-action-group {
                 display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                justify-content: flex-end;
+                flex-wrap: nowrap;
+                gap: 4px;
+                flex-shrink: 0;
             }
             .lp-link-card-action-group .md3-btn {
-                padding: 6px 12px;
-                font-size: 12px;
+                padding: 3px 8px;
+                font-size: 11px;
             }
             .lp-link-card-drag-hint {
-                color: #6b7280;
-                font-size: 12px;
+                position: absolute;
+                bottom: 4px;
+                right: 8px;
+                color: #9ca3af;
+                font-size: 10px;
                 white-space: nowrap;
                 cursor: grab;
                 user-select: none;
+                pointer-events: none;
             }
             .lp-link-card.lp-drag-disabled .lp-link-card-drag-hint {
-                opacity: .7;
                 cursor: default;
             }
             .lp-empty-state {
@@ -962,11 +961,11 @@ include 'menu.php';
                     padding: 10px;
                 }
                 .lp-link-card {
-                    padding: 12px;
-                    border-radius: 14px;
+                    padding: 9px 10px 16px;
+                    border-radius: 12px;
                 }
                 .lp-link-card-head {
-                    gap: 8px;
+                    gap: 6px;
                 }
                 .manage-list-header {
                     padding: 10px;
@@ -974,20 +973,19 @@ include 'menu.php';
                     gap: 8px;
                 }
             }
-            /* 480px：卡片操作改为上下布局 */
+            /* 480px：小屏幕按钮换行 */
             @media (max-width: 480px) {
                 .lp-link-card-avatar {
-                    width: 38px;
-                    height: 38px;
-                    border-radius: 10px;
+                    width: 30px;
+                    height: 30px;
+                    border-radius: 6px;
                 }
-                .lp-link-card-actions {
-                    flex-direction: column;
-                    align-items: stretch;
+                .lp-link-card-title-row {
+                    flex-wrap: wrap;
                 }
                 .lp-link-card-action-group {
                     width: 100%;
-                    justify-content: stretch;
+                    justify-content: flex-end;
                 }
                 .lp-link-card-action-group .md3-btn {
                     flex: 1;
@@ -1103,6 +1101,14 @@ include 'menu.php';
                                     <div class="lp-link-card-main">
                                         <div class="lp-link-card-title-row">
                                             <a class="edit-link lp-link-card-title" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>" title="<?php _e('点击编辑'); ?>"><?php echo $link['name']; ?></a>
+                                            <div class="lp-link-card-action-group">
+                                                <?php if ((int)$link['state'] === 2): ?>
+                                                <a class="md3-btn tonal" href="<?php $security->index('/action/links-edit?do=approve&lid=' . intval($link['lid'])); ?>" onclick="return confirm('确认通过该友链申请吗？');"><?php _e('通过'); ?></a>
+                                                <a class="md3-btn danger" href="<?php $security->index('/action/links-edit?do=reject&lid=' . intval($link['lid'])); ?>" onclick="lpRejectSingle(event, this); return false;"><?php _e('驳回'); ?></a>
+                                                <?php endif; ?>
+                                                <a class="md3-btn" href="<?php echo $link['url']; ?>" target="_blank" rel="noopener"><?php _e('访问'); ?></a>
+                                                <a class="md3-btn" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>"><?php _e('编辑'); ?></a>
+                                            </div>
                                         </div>
                                         <a class="lp-link-card-url" href="<?php echo $link['url']; ?>" target="_blank" rel="noopener"><i class="i-exlink"></i> <?php echo $link['url']; ?></a>
                                         <div class="lp-link-card-meta">
@@ -1122,17 +1128,7 @@ include 'menu.php';
                                         <div class="lp-link-card-hint-slot"></div>
                                     </div>
                                 </div>
-                                <div class="lp-link-card-actions">
-                                    <span class="lp-link-card-drag-hint"><?php _e('拖拽排序'); ?></span>
-                                    <div class="lp-link-card-action-group">
-                                        <?php if ((int)$link['state'] === 2): ?>
-                                        <a class="md3-btn tonal" href="<?php $security->index('/action/links-edit?do=approve&lid=' . intval($link['lid'])); ?>" onclick="return confirm('确认通过该友链申请吗？');"><?php _e('通过'); ?></a>
-                                        <a class="md3-btn danger" href="<?php $security->index('/action/links-edit?do=reject&lid=' . intval($link['lid'])); ?>" onclick="lpRejectSingle(event, this); return false;"><?php _e('驳回'); ?></a>
-                                        <?php endif; ?>
-                                        <a class="md3-btn" href="<?php echo $link['url']; ?>" target="_blank" rel="noopener"><?php _e('访问'); ?></a>
-                                        <a class="md3-btn" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>"><?php _e('编辑'); ?></a>
-                                    </div>
-                                </div>
+                                <span class="lp-link-card-drag-hint"><?php _e('⠿ 拖拽'); ?></span>
                             </article>
                             <?php endforeach; ?>
                             <?php else: ?>
@@ -1217,7 +1213,7 @@ $('input[name="email"]').blur(function() {
                 $(this)
                     .toggleClass('lp-drag-disabled', !enabled)
                     .find('.lp-link-card-drag-hint')
-                    .text(enabled ? '<?php _e('拖拽排序'); ?>' : '<?php _e('筛选中不可拖拽'); ?>');
+                    .text(enabled ? '\u28ff \u62d6\u62fd' : '');
             });
         }
 
