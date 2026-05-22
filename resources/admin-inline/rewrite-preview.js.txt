@@ -1,0 +1,175 @@
+document.addEventListener('DOMContentLoaded', function(){
+    var sel = document.querySelector('select[name="rewrite_pattern"]');
+    var host = document.getElementById('rewrite-tpl-preview-html');
+    var title = document.getElementById('rewrite-tpl-preview-title');
+    if(!sel || !host || !title) return;
+    var base = __LP_TPL_BASE_URL__;
+
+    var demoLinks = [
+        {
+            lid: '1',
+            name: "LHL's Blog",
+            title: '博客',
+            description: '作者博客',
+            sort: '博客',
+            url: 'https://blog.lhl.one',
+            image: 'https://smms-vip3.see.you/2025/04/18/KXpf8u5SQYNPkA3.jpg',
+            user: ''
+        },
+        {
+            lid: '2',
+            name: "LHL's Shop",
+            title: '图床',
+            description: '聚合图床',
+            sort: '图床',
+            url: 'https://img.lhl.one',
+            image: 'https://smms-vip3.see.you/2026/01/27/ctiYDAXyxkRGbmB.png',
+            user: ''
+        }
+    ];
+
+    function esc(v){
+        return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function requestText(url, cb){
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.onreadystatechange = function(){
+            if(xhr.readyState !== 4) return;
+            if(xhr.status >= 200 && xhr.status < 300){
+                cb(null, xhr.responseText || '');
+            } else {
+                cb(new Error('HTTP ' + xhr.status));
+            }
+        };
+        xhr.send(null);
+    }
+
+    function applyTemplate(tpl, item){
+        var out = tpl;
+        var map = {
+            lid: item.lid,
+            name: esc(item.name),
+            url: esc(item.url),
+            sort: esc(item.sort),
+            title: esc(item.title),
+            description: esc(item.description),
+            image: esc(item.image),
+            user: esc(item.user),
+            size: '120'
+        };
+        for(var k in map){
+            if(Object.prototype.hasOwnProperty.call(map, k)){
+                out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), map[k]);
+            }
+        }
+        return out;
+    }
+
+    function wrapHtml(itemsHtml, manifestText){
+        try {
+            var manifest = JSON.parse(manifestText || '{}');
+            var wrapper = manifest && manifest.wrapper ? manifest.wrapper : null;
+            if(!wrapper || !wrapper.tag) return itemsHtml;
+            var tag = String(wrapper.tag).toLowerCase();
+            if(['ul','ol','div'].indexOf(tag) === -1) return itemsHtml;
+            var el = document.createElement(tag);
+            if(wrapper.class) el.className = String(wrapper.class);
+            if(wrapper.id) el.id = String(wrapper.id);
+            if(wrapper.attrs && typeof wrapper.attrs === 'object'){
+                for(var key in wrapper.attrs){
+                    if(Object.prototype.hasOwnProperty.call(wrapper.attrs, key)){
+                        el.setAttribute(key, String(wrapper.attrs[key]));
+                    }
+                }
+            }
+            el.innerHTML = itemsHtml;
+            return el.outerHTML;
+        } catch (e) {
+            return itemsHtml;
+        }
+    }
+
+    function injectPreviewCss(name, cssText){
+        var styleId = 'lp-rewrite-preview-style';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        if(!cssText) return;
+        var el = document.createElement('style');
+        el.id = styleId;
+        el.textContent = cssText;
+        document.head.appendChild(el);
+    }
+
+    function injectPreviewJs(scriptId, jsText){
+        var old = document.getElementById(scriptId);
+        if(old) old.parentNode.removeChild(old);
+        if(!jsText) return;
+        var el = document.createElement('script');
+        el.id = scriptId;
+        el.textContent = jsText;
+        document.body.appendChild(el);
+    }
+
+    function renderTemplate(name){
+        var styleId  = 'lp-rewrite-preview-style';
+        var scriptId = 'lp-rewrite-preview-script';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+        var oldScript = document.getElementById(scriptId);
+        if(oldScript) oldScript.parentNode.removeChild(oldScript);
+
+        requestText(base + name + '/template.html', function(err, tpl){
+            if(err || !tpl || !tpl.trim()){
+                host.innerHTML = '<div style="color:#b91c1c;">模板读取失败，无法预览。</div>';
+                title.textContent = '';
+                return;
+            }
+
+            var html = '';
+            for(var i = 0; i < demoLinks.length; i++){
+                html += applyTemplate(tpl, demoLinks[i]);
+            }
+
+            requestText(base + name + '/manifest.json', function(manifestErr, manifestText){
+                var manifest = null;
+                try { manifest = JSON.parse(manifestText || '{}'); } catch(e) {}
+                var wrapped = (manifestErr || !manifest) ? html : wrapHtml(html, manifestText);
+                host.innerHTML = wrapped;
+                title.textContent = '';
+                if(manifest && manifest.inject && manifest.inject.css){
+                    requestText(base + name + '/style.css?t=' + Date.now(), function(cssErr, cssText){
+                        if(!cssErr && cssText) injectPreviewCss(name, cssText);
+                    });
+                }
+                if(manifest && manifest.inject && manifest.inject.js){
+                    requestText(base + name + '/script.js?t=' + Date.now(), function(jsErr, jsText){
+                        if(!jsErr && jsText) injectPreviewJs(scriptId, jsText);
+                    });
+                }
+            });
+        });
+    }
+
+    function update(){
+        var v = sel.value || '';
+        if(v.indexOf('TPL:') === 0){
+            renderTemplate(v.substring(4));
+        } else {
+            var styleId = 'lp-rewrite-preview-style';
+            var old = document.getElementById(styleId);
+            if(old) old.parentNode.removeChild(old);
+            host.innerHTML = '<div style="color:#6b7280;">暂无预览（请选择文件模板）。</div>';
+            title.textContent = '';
+        }
+    }
+
+    sel.addEventListener('change', update);
+    update();
+});
