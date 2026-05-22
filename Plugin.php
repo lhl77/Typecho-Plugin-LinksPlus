@@ -428,7 +428,7 @@ class Links_Plugin implements Typecho_Plugin_Interface
         $licenseField->input->setAttribute('placeholder', 'XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX');
         $form->addInput($licenseField);
 
-        echo '<script>(function(){document.addEventListener("DOMContentLoaded",function(){var host=document.getElementById(' . json_encode($hostId) . ');var field=document.querySelector("[name=\"license_code\"]");if(!host||!field){return;}var option=field.closest(".typecho-option");if(!option){return;}host.appendChild(option);});})();</script>';
+        echo '<script>(function(){function place(){var host=document.getElementById(' . json_encode($hostId) . ');var field=document.querySelector("[name=\"license_code\"]");if(!host||!field){return;}var option=field.closest(".typecho-option");if(!option){return;}host.appendChild(option);}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",place);}place();})();</script>';
     }
 
     private static function addLegacyConfigInputs(Typecho_Widget_Helper_Form $form, $settings = null)

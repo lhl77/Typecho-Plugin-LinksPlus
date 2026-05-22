@@ -14,8 +14,6 @@
 
 增强版文档：https://see.lhl.one/Typecho-LinksPlus
 
-增强版购买地址：https://shop.lhl.one/store/typecho-plugins/links-plus
-
 ---
 
 ## 环境要求
@@ -41,6 +39,56 @@
 
 ---
 
+## 受保护分发
+
+如果你要把 `core.php`、`Action.php` 和后台资产映射一并做受保护分发，可以继续使用仓库内置的 `build_distribution.php`，再配合 `build_protected_distribution.php` 作为一键包装入口。
+
+### 1. 准备本地编码配置
+
+1. 复制 `usr/plugins/Links/build_encoder.example.php` 为本地文件 `usr/plugins/Links/build_encoder.local.php`
+2. 按照你的编码器厂商文档，把 `encoderCommand` 改成真实可执行命令
+3. 命令模板里必须保留 `{input}` 和 `{output}` 占位符
+
+`build_encoder.local.php` 已加入插件目录下的 `.gitignore`，不会被默认提交。
+
+### 2. 一键生成受保护分发包
+
+在插件目录执行：
+
+```bash
+php build_protected_distribution.php --version=1.4.1 --target=protected
+```
+
+默认会调用：
+
+- `build_distribution.php`
+- 编码 `core.php`
+- 编码 `Action.php`
+- 编码 `assets/LinksAssetMap.php`
+- 产出 `dist/` 目录下的单包分发结果
+
+### 3. 额外参数
+
+你也可以在命令行临时覆盖本地配置中的默认值：
+
+```bash
+php build_protected_distribution.php --version=1.4.1 --target=release --zip=1
+```
+
+若只想检查最终命令而不实际执行，可使用：
+
+```bash
+php build_protected_distribution.php --dry-run=1
+```
+
+### 4. 注意事项
+
+- 仓库不会硬编码 ionCube 或 SourceGuardian 的 CLI 语法；请以你购买/安装的编码器官方文档为准填写 `encoderCommand`
+- 旧版 Zend Guard 7（如 `zendenc55`、`zendenc56`）只适用于 PHP 5.5/5.6，不适用于本插件要求的 PHP 7.2+
+- 任何本地分发加密都只能提高逆向成本，不能承诺绝对不可逆；如果要进一步提高授权校验安全性，建议把签发逻辑放到服务端
+
+---
+
 ## 主题
 
 - 模板目录为 `templates/<name>/`。
@@ -58,3 +106,29 @@
 - 使用帮助： https://blog.lhl.one/artical/902.html 
 
 如果你需要更详细的开发/模板示例，可以在仓库 Issues 或 PR 提问。
+
+开启：
+
+变量拆分混淆：开，次数 1
+变量名编码：开，长度 8 到 10
+字符串编码：开，长度 10 左右
+数字编码：开
+GZ 压缩编码：开
+插入无用代码：开
+移除注释：开
+代码压缩：开
+控制流混淆：开，复杂度选 medium
+目标 PHP 版本：选 7
+重复加密次数：1
+关闭：
+
+函数名混淆：关
+函数调用混淆：关
+函数调用编码：关
+类名混淆：关
+HTML 编码：关
+保留换行符：关
+GOTO 混淆：关
+VM 虚拟机壳：关
+EVAL 虚拟机壳：关
+调试模式：关
