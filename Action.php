@@ -31,6 +31,11 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         return $value === '' ? array() : array($value);
     }
 
+    private function getPluginSettings()
+    {
+        return Links_Plugin::getPluginSettings($this->options);
+    }
+
     /**
      * 获取操作目标 lids（兼容批量/单条）
      *
@@ -219,6 +224,26 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
                strtolower(trim((string)$_SERVER['HTTP_X_REQUESTED_WITH'])) === 'xmlhttprequest';
     }
 
+    private function denyPremiumAction($message = '')
+    {
+        if ($message === '') {
+            $message = _t('当前未授权，仅可浏览友链列表。请先购买 Links+ 并在插件设置中填写授权码。');
+        }
+
+        if ($this->isAjaxRequest()) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array(
+                'ok' => false,
+                'status' => 0,
+                'error' => (string)$message,
+            ), JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $this->widget('Widget_Notice')->set((string)$message, null, 'notice');
+        $this->response->redirect(Typecho_Common::url('options-plugin.php?config=Links', $this->options->adminUrl));
+    }
+
     /**
      * 前台申请回跳并带状态码；AJAX 请求时改为返回 JSON
      */
@@ -294,7 +319,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
      */
     private function sendTemplatedMail($to, $subjectTpl, $bodyTpl, array $vars, $replyTo = '')
     {
-        $settings = $this->options->plugin('Links');
+        $settings = $this->getPluginSettings();
         $enabled = $this->normalizeOptionArray(isset($settings->apply_mail_enabled) ? $settings->apply_mail_enabled : array());
         if (!in_array('enabled', $enabled, true)) {
             return false;
@@ -366,7 +391,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
      */
     private function notifyAdminForApply(array $link)
     {
-        $settings = $this->options->plugin('Links');
+        $settings = $this->getPluginSettings();
 
         $subjectTpl = isset($settings->apply_mail_tpl_admin_subject) && trim((string)$settings->apply_mail_tpl_admin_subject) !== ''
             ? (string)$settings->apply_mail_tpl_admin_subject
@@ -411,7 +436,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
             return false;
         }
 
-        $settings = $this->options->plugin('Links');
+        $settings = $this->getPluginSettings();
         if ($approved) {
             $subjectTpl = isset($settings->apply_mail_tpl_approved_subject) && trim((string)$settings->apply_mail_tpl_approved_subject) !== ''
                 ? (string)$settings->apply_mail_tpl_approved_subject
@@ -688,7 +713,12 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
             return;
         }
 
-        $settings = $this->options->plugin('Links');
+        $settings = $this->getPluginSettings();
+        if (!Links_Plugin::isLicensed($settings, $this->options)) {
+            $this->redirectApplyStatus('invalid');
+            return;
+        }
+
         $enabled = $this->normalizeOptionArray(isset($settings->enable_link_apply) ? $settings->enable_link_apply : array());
         if (!in_array('enabled', $enabled, true)) {
             $this->redirectApplyStatus('invalid');
@@ -1257,7 +1287,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
     public function rewriteContents()
     {
         $options = Typecho_Widget::widget('Widget_Options');
-        $settings = $options->plugin('Links');
+        $settings = Links_Plugin::getPluginSettings($options);
 
         $raw = isset($settings->rewrite_cids) ? trim((string)$settings->rewrite_cids) : '';
         if ($raw === '') {
@@ -1395,6 +1425,7 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->db = Typecho_Db::get();
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
+        $settings = $this->getPluginSettings();
 
         // 前台公开入口：友链申请提交
         if ($this->request->is('do=apply-submit')) {
@@ -1406,6 +1437,11 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         Helper::security()->protect();
         $user = Typecho_Widget::widget('Widget_User');
         $user->pass('administrator');
+
+        if (!Links_Plugin::isLicensed($settings, $this->options)) {
+            $this->denyPremiumAction();
+            return;
+        }
 
         $this->on($this->request->is('do=insert'))->insertLink();
         $this->on($this->request->is('do=update'))->updateLink();
