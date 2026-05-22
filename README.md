@@ -14,6 +14,8 @@
 
 增强版文档：https://see.lhl.one/Typecho-LinksPlus
 
+增强版购买地址：https://shop.lhl.one/store/typecho-plugins/links-plus
+
 ---
 
 ## 环境要求
