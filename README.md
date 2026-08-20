@@ -26,10 +26,10 @@
 ## 安装
 
 **方法一** 通过AB Store安装
-详见：https://github.com/lhl77/Typecho-Plugin-AdminBeautify
+AB Store Web 插件主页: https://ab-store.lhl.one/plugin/414bab94
 
 **方法二** 手动安装
-1. 下载本插件并解压到：
+1. 下载本插件（[镜像下载](https://ab-store.lhl.one/plugin/414bab94)）并解压到：
 	- `usr/plugins/Links/`
 2. 确认目录结构包含：
 	- `usr/plugins/Links/Plugin.php`
