@@ -1422,6 +1422,12 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
 
     public function action()
     {
+        // 后台 AJAX 结果不缓存：前置 CDN 时避免命中上一版逻辑/旧数据
+        if (!headers_sent()) {
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Pragma: no-cache');
+        }
+
         $this->db = Typecho_Db::get();
         $this->prefix = $this->db->getPrefix();
         $this->options = Typecho_Widget::widget('Widget_Options');
@@ -1439,8 +1445,14 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $user->pass('administrator');
 
         if (!Links_Plugin::isLicensed($settings, $this->options)) {
-            $this->denyPremiumAction();
-            return;
+            // 未授权：基础友链管理（新增/编辑/删除/启用/禁用/排序/邮箱头像）仍可使用，
+            // 只拦截付费增强动作（审核、正文重写、一键检查、同步模板）
+            $premiumActions = array('approve', 'reject', 'rewrite', 'check-link', 'update_templates');
+            $requested = (string)$this->request->get('do');
+            if (in_array($requested, $premiumActions, true)) {
+                $this->denyPremiumAction();
+                return;
+            }
         }
 
         $this->on($this->request->is('do=insert'))->insertLink();
@@ -1448,10 +1460,10 @@ class Links_Action extends Typecho_Widget implements Widget_Interface_Do
         $this->on($this->request->is('do=delete'))->deleteLink();
         $this->on($this->request->is('do=enable'))->enableLink();
         $this->on($this->request->is('do=prohibit'))->prohibitLink();
-        $this->on($this->request->is('do=approve'))->approveLink();
-        $this->on($this->request->is('do=reject'))->rejectLink();
         $this->on($this->request->is('do=sort'))->sortLink();
         $this->on($this->request->is('do=email-logo'))->emailLogo();
+        $this->on($this->request->is('do=approve'))->approveLink();
+        $this->on($this->request->is('do=reject'))->rejectLink();
         $this->on($this->request->is('do=rewrite'))->rewriteContents();
         $this->on($this->request->is('do=check-link'))->checkLink();
         $this->on($this->request->is('do=update_templates'))->updateTemplates();

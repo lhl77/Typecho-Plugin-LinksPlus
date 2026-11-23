@@ -5,8 +5,13 @@
  * 
  * @package Links+
  * @author LHL
- * @version 2.0.0
- * @link https://github.com/lhl77/Typecho-Plugin-LinksPlus
+ * @version 2.0.1
+ * @link https://typecho-links.lhl.one/
+ * 
+ * version 2.0.1 at 2026-11-21 by LHL
+ * 新增 PostgreSQL 支持（Pgsql.sql / Update_Pgsql.sql）
+ * 短代码新增 category 分类参数；正文重写新增「自定义重写模板」
+ * 授权码支持 www / 非 www 双向校验
  * 
  * version 2.0.0 at 2026-05-22 by LHL
  * 重构插件架构，插件变更为付费插件
@@ -327,15 +332,29 @@ class Links_Plugin implements Typecho_Plugin_Interface
         try {
             $db = Typecho_Db::get();
             $prefix = $db->getPrefix();
+            $driver = 'mysql';
             try {
-                $result = $db->query('SHOW TABLES LIKE \'' . $prefix . 'links\'');
-                $tableExists = (bool)$db->fetchRow($result);
+                $adapterName = explode('_', (string)$db->getAdapterName());
+                $driver = strtolower((string)array_pop($adapterName));
             } catch (Exception $e) {
-                // SQLite fallback
+                $driver = 'mysql';
+            } catch (Throwable $e) {
+                $driver = 'mysql';
+            }
+
+            if ($driver === 'sqlite') {
                 $result = $db->query('SELECT name FROM sqlite_master WHERE type=\'table\' AND name=\'' . $prefix . 'links\'');
+                $tableExists = (bool)$db->fetchRow($result);
+            } elseif ($driver === 'pgsql') {
+                $result = $db->query('SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename = \'' . $prefix . 'links\'');
+                $tableExists = (bool)$db->fetchRow($result);
+            } else {
+                $result = $db->query('SHOW TABLES LIKE \'' . $prefix . 'links\'');
                 $tableExists = (bool)$db->fetchRow($result);
             }
         } catch (Exception $e) {
+            $tableExists = true; // 无法判断时不误报
+        } catch (Throwable $e) {
             $tableExists = true; // 无法判断时不误报
         }
         if (!$tableExists) {

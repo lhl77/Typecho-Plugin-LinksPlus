@@ -157,8 +157,63 @@ document.addEventListener('DOMContentLoaded', function(){
         });
     }
 
+    function applyTextTemplate(tpl, item){
+        var out = String(tpl == null ? '' : tpl);
+        var map = {
+            lid: item.lid,
+            name: item.name,
+            url: item.url,
+            sort: item.sort,
+            title: item.title,
+            description: item.description,
+            image: item.image,
+            user: item.user,
+            size: '120'
+        };
+        for(var k in map){
+            if(Object.prototype.hasOwnProperty.call(map, k)){
+                out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), map[k] == null ? '' : String(map[k]));
+            }
+        }
+        return out;
+    }
+
+    function renderCustom(){
+        var field = document.querySelector('[name="rewrite_custom_template"]');
+        var tpl = field && field.value ? String(field.value) : '';
+        var styleId = 'lp-rewrite-preview-style';
+        var old = document.getElementById(styleId);
+        if(old) old.parentNode.removeChild(old);
+
+        if(!tpl.trim()){
+            host.innerHTML = '<div style="color:#6b7280;">模板为空，请先在上方填写自定义重写模板。</div>';
+            title.textContent = '';
+            return;
+        }
+
+        var lines = [];
+        for(var i = 0; i < demoLinks.length; i++){
+            lines.push(applyTextTemplate(tpl, demoLinks[i]));
+        }
+
+        host.innerHTML = '';
+        var pre = document.createElement('div');
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.wordBreak = 'break-all';
+        pre.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+        pre.style.fontSize = '13px';
+        pre.style.lineHeight = '1.75';
+        pre.textContent = lines.join('\n');
+        host.appendChild(pre);
+        title.textContent = '纯文本预览（' + demoLinks.length + ' 条示例）—— 每条友链输出一行，由主题自己渲染';
+    }
+
     function update(){
         var v = sel.value || '';
+        if(v === 'CUSTOM'){
+            renderCustom();
+            return;
+        }
         if(v.indexOf('TPL:') === 0){
             renderTemplate(v.substring(4));
         } else {
@@ -168,6 +223,13 @@ document.addEventListener('DOMContentLoaded', function(){
             host.innerHTML = '<div style="color:#6b7280;">暂无预览（请选择文件模板）。</div>';
             title.textContent = '';
         }
+    }
+
+    var customField = document.querySelector('[name="rewrite_custom_template"]');
+    if(customField){
+        customField.addEventListener('input', function(){
+            if((sel.value || '') === 'CUSTOM'){ renderCustom(); }
+        });
     }
 
     sel.addEventListener('change', update);

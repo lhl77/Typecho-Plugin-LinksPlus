@@ -16,8 +16,27 @@ $request = $options->request;
 $response = $options->response;
 $licenseState = Links_Plugin::getLicenseState();
 $licensed = !empty($licenseState['authorized']);
-$editMode = $licensed && isset($request->lid) && intval($request->lid) > 0;
+// 未授权也允许基础友链管理（新增/编辑/删除/启用/禁用/拖拽排序），仅「审核申请」需授权
+$canModerate = $licensed;
+$editMode = isset($request->lid) && intval($request->lid) > 0;
 $manageLinksUrl = $options->adminUrl . 'extending.php?panel=' . urlencode('Links/manage-links.php');
+$lpAssetsBase = Typecho_Common::url('usr/plugins/Links/assets/', $options->siteUrl);
+$lpAssetVer = Links_Plugin::adminAssetFingerprint();
+
+/**
+ * Typecho 1.2+ 的 Widget\Menu::$title 是强类型属性。
+ * 从 extending.php 面板入口进入时它已被初始化；直接访问本文件时没有，
+ * header.php 读取它会抛 "must not be accessed before initialization" → 500。
+ * 这里做一次兜底赋值，保证两种入口都能正常渲染。
+ */
+try {
+    $lpMenuTitleProbe = $menu->title;
+    unset($lpMenuTitleProbe);
+} catch (\Throwable $lpMenuTitleError) {
+    $menu->title = _t('友情链接');
+    unset($lpMenuTitleError);
+}
+
 include 'header.php';
 include 'menu.php';
 ?>
@@ -28,6 +47,7 @@ include 'menu.php';
         <?php include 'page-title.php'; ?>
         
         <?php echo '<style id="links-plus-admin-manage-style">' . Links_Plugin::getAssetContent('LinksAdminManage.css') . '</style>'; ?>
+        <meta name="links-plus-assets" content="<?php echo htmlspecialchars($lpAssetVer, ENT_QUOTES, 'UTF-8'); ?>">
 
         <div class="md3-wrap">
             <div class="md3-notice-stack">
@@ -38,16 +58,20 @@ include 'menu.php';
             </div>
             <div class="md3-appbar">
                 <div class="md3-appbar-title">
-                    <b><?php _e($editMode ? '编辑友链' : ($licensed ? '友情链接' : '友情链接（只读）')); ?></b>
-                    <span><?php $editMode ? _e('修改后点击编辑友链') : ($licensed ? _e('拖拽排序 / 批量操作') : _e('未授权状态下仅可查看友链列表')); ?></span>
+                    <div class="lp-appbar-brand">
+                        <img class="lp-brand-logo" src="<?php echo htmlspecialchars(Links_Plugin::assetUrl('img/links-mark.svg', $lpAssetsBase), ENT_QUOTES, 'UTF-8'); ?>" alt="Links+" width="30" height="30">
+                        <b><?php _e($editMode ? '编辑友链' : '友情链接'); ?></b>
+                    </div>
+                    <span><?php $editMode ? _e('修改后点击编辑友链') : _e('拖拽排序 / 批量操作'); ?></span>
                 </div>
                 <div class="md3-appbar-actions">
-                    <?php if ($licensed && $editMode): ?>
+                    <?php if ($editMode): ?>
                     <a class="md3-btn" href="<?php echo htmlspecialchars($manageLinksUrl, ENT_QUOTES, 'UTF-8'); ?>"><?php _e('← 返回列表'); ?></a>
                     <?php endif; ?>
                     <a class="md3-btn tonal" href="<?php $options->adminUrl('options-plugin.php?config=Links'); ?>"><?php _e('设置'); ?></a>
-                    
-                    <a class="md3-btn" href="https://blog.lhl.one/artical/902.html " target="_blank"><?php _e('帮助'); ?></a>
+
+                    <a class="md3-btn" href="<?php echo htmlspecialchars(Links_Plugin::getSiteUrl(), ENT_QUOTES, 'UTF-8'); ?>" target="_blank" rel="noopener"><?php _e('官网'); ?></a>
+                    <a class="md3-btn" href="https://blog.lhl.one/artical/902.html" target="_blank" rel="noopener"><?php _e('帮助'); ?></a>
                     <?php if ($licensed): ?>
                     <a class="md3-btn danger" href="javascript:void(0)" id="linksPlusCheckAll" title="通过后端代理检测每个友链是否可访问（可获取真实状态码，避免浏览器跨域/CORS 限制）"><?php _e('一键检查'); ?></a>
                     <a class="md3-btn primary" href="<?php $security->index('/action/links-edit?do=rewrite'); ?>" title="将指定 cid 文章正文中的 {{links_plus}} 占位符替换为友链 HTML" onclick="return confirm('确认要执行正文重写吗？该操作会直接修改文章/页面正文内容。[更推荐使用短代码功能]');"><?php _e('执行重写'); ?></a>
@@ -55,6 +79,11 @@ include 'menu.php';
                     <a class="md3-btn primary" href="<?php echo htmlspecialchars(Links_Plugin::getLicensePurchaseUrl(), ENT_QUOTES, 'UTF-8'); ?>" target="_blank" rel="noopener"><?php _e('购买 Links+'); ?></a>
                     <?php endif; ?>
                 </div>
+            </div>
+
+            <!-- 一键检查结果条：检查时/检查后显示在 AppBar 下方 -->
+            <div class="lp-check-bar" id="linksPlusCheckBar" hidden>
+                <span class="lp-check-bar-text" role="status" aria-live="polite"></span>
             </div>
 
         <?php if ($editMode): ?>
@@ -74,7 +103,8 @@ include 'menu.php';
                 <div class="manage-list-panel md3-card" role="main">
                     <?php
                         $prefix = $db->getPrefix();
-                        $links = $db->fetchAll($db->select()->from($prefix.'links')->order($prefix.'links.order', Typecho_Db::SORT_ASC));
+                        // 用裸字段名：order 是 PostgreSQL 保留字，带表前缀时查询构造器不会加引号
+                        $links = $db->fetchAll($db->select()->from($prefix.'links')->order('order', Typecho_Db::SORT_ASC));
                         $cnt_all     = count($links);
                         $cnt_enabled = 0; $cnt_pending = 0; $cnt_disabled = 0;
                         foreach ($links as $lk) {
@@ -88,7 +118,9 @@ include 'menu.php';
                     <div class="lp-filter-bar">
                         <button class="lp-filter-tab active" data-filter="all"><?php _e('全部'); ?></button>
                         <button class="lp-filter-tab" data-filter="1"><?php _e('已启用'); ?> <span class="lp-filter-badge"><?php echo $cnt_enabled; ?></span></button>
+                        <?php if ($canModerate): ?>
                         <button class="lp-filter-tab" data-filter="2"><?php _e('待审核'); ?> <span class="lp-filter-badge"><?php echo $cnt_pending; ?></span></button>
+                        <?php endif; ?>
                         <button class="lp-filter-tab" data-filter="0"><?php _e('已禁用'); ?></button>
                     </div>
 
@@ -97,41 +129,35 @@ include 'menu.php';
 
                     <div class="manage-list-header">
                         <div class="operate">
-                            <?php if ($licensed): ?>
                             <label><i class="sr-only"><?php _e('全选'); ?></i><input type="checkbox" class="typecho-table-select-all" /></label>
                             <div class="btn-group btn-drop">
                                 <button class="btn dropdown-toggle btn-s" type="button"><i class="sr-only"><?php _e('操作'); ?></i><?php _e('选中项'); ?> <i class="i-caret-down"></i></button>
                                 <ul class="dropdown-menu">
                                     <li><a lang="<?php _e('你确认要删除这些友链吗?'); ?>" href="<?php $security->index('/action/links-edit?do=delete'); ?>"><?php _e('删除'); ?></a></li>
+                                    <?php if ($canModerate): ?>
                                     <li><a lang="<?php _e('你确认要通过这些待审核友链吗?'); ?>" href="<?php $security->index('/action/links-edit?do=approve'); ?>"><?php _e('通过审核'); ?></a></li>
                                     <li><a data-lp-reject-bulk="1" href="<?php $security->index('/action/links-edit?do=reject'); ?>"><?php _e('驳回审核'); ?></a></li>
+                                    <?php endif; ?>
                                     <li><a lang="<?php _e('你确认要启用这些友链吗?'); ?>" href="<?php $security->index('/action/links-edit?do=enable'); ?>"><?php _e('启用'); ?></a></li>
                                     <li><a lang="<?php _e('你确认要禁用这些友链吗?'); ?>" href="<?php $security->index('/action/links-edit?do=prohibit'); ?>"><?php _e('禁用'); ?></a></li>
                                 </ul>
                             </div>
-                            <?php else: ?>
-                            <span class="description" style="margin:0"><?php _e('当前为只读模式：可查看列表，购买并填写授权码后可新增、编辑、审核、重写和启用短代码/申请功能。'); ?></span>
-                            <?php endif; ?>
                         </div>
-                        <?php if ($licensed): ?>
                         <button type="button" class="lp-add-btn" id="lpShowAddForm">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                             <?php _e('添加友链'); ?>
                         </button>
-                        <?php endif; ?>
                     </div>
 
                     <div class="typecho-table-wrap">
                         <div class="lp-card-grid" id="lpCardGrid">
                             <?php if (!empty($links)): $alt = 0;?>
                             <?php foreach ($links as $link): ?>
-                            <article class="lp-link-card<?php echo $licensed ? '' : ' lp-drag-disabled'; ?>" id="lid-<?php echo $link['lid']; ?>" data-lid="<?php echo intval($link['lid']); ?>" data-url="<?php echo htmlspecialchars($link['url'], ENT_QUOTES, 'UTF-8'); ?>" data-state="<?php echo intval($link['state']); ?>" draggable="<?php echo $licensed ? 'true' : 'false'; ?>">
+                            <article class="lp-link-card" id="lid-<?php echo $link['lid']; ?>" data-lid="<?php echo intval($link['lid']); ?>" data-url="<?php echo htmlspecialchars($link['url'], ENT_QUOTES, 'UTF-8'); ?>" data-state="<?php echo intval($link['state']); ?>" draggable="true">
                                 <div class="lp-link-card-head">
-                                    <?php if ($licensed): ?>
                                     <label class="lp-link-card-check">
                                         <input type="checkbox" class="lp-card-check" value="<?php echo $link['lid']; ?>" name="lid[]"/>
                                     </label>
-                                    <?php endif; ?>
                                     <div class="lp-link-card-avatar">
                                         <?php
                                             if ($link['image']) {
@@ -145,20 +171,14 @@ include 'menu.php';
                                     </div>
                                     <div class="lp-link-card-main">
                                         <div class="lp-link-card-title-row">
-                                            <?php if ($licensed): ?>
                                             <a class="edit-link lp-link-card-title" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>" title="<?php _e('点击编辑'); ?>"><?php echo $link['name']; ?></a>
-                                            <?php else: ?>
-                                            <span class="lp-link-card-title"><?php echo $link['name']; ?></span>
-                                            <?php endif; ?>
                                             <div class="lp-link-card-action-group">
                                                 <?php if ($licensed && (int)$link['state'] === 2): ?>
                                                 <a class="md3-btn tonal" href="<?php $security->index('/action/links-edit?do=approve&lid=' . intval($link['lid'])); ?>" onclick="return confirm('确认通过该友链申请吗？');"><?php _e('通过'); ?></a>
                                                 <a class="md3-btn danger" href="<?php $security->index('/action/links-edit?do=reject&lid=' . intval($link['lid'])); ?>" onclick="lpRejectSingle(event, this); return false;"><?php _e('驳回'); ?></a>
                                                 <?php endif; ?>
                                                 <a class="md3-btn" href="<?php echo $link['url']; ?>" target="_blank" rel="noopener"><?php _e('访问'); ?></a>
-                                                <?php if ($licensed): ?>
                                                 <a class="md3-btn" href="<?php echo $request->makeUriByRequest('lid=' . $link['lid']); ?>"><?php _e('编辑'); ?></a>
-                                                <?php endif; ?>
                                             </div>
                                         </div>
                                         <a class="lp-link-card-url" href="<?php echo $link['url']; ?>" target="_blank" rel="noopener"><i class="i-exlink"></i> <?php echo $link['url']; ?></a>
@@ -179,9 +199,7 @@ include 'menu.php';
                                         <div class="lp-link-card-hint-slot"></div>
                                     </div>
                                 </div>
-                                <?php if ($licensed): ?>
                                 <span class="lp-link-card-drag-hint"><?php _e('⠿ 拖拽'); ?></span>
-                                <?php endif; ?>
                             </article>
                             <?php endforeach; ?>
                             <?php else: ?>
@@ -193,7 +211,6 @@ include 'menu.php';
                 </div>
 
                 <!-- 右侧：编辑表单（添加新友链）-->
-                <?php if ($licensed): ?>
                 <div class="editor-panel md3-card" role="form">
                     <div class="editor-panel-placeholder" id="lpEditorPlaceholder">
                         <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
@@ -203,7 +220,6 @@ include 'menu.php';
                          <?php Links_Plugin::form()->render(); ?>
                     </div>
                 </div>
-                <?php endif; ?>
         </div>
         <?php endif; ?>
     </div>

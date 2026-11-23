@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Links+">
+  <title>Links+</title>
+  <defs>
+    <!-- 后环：被扣住的那一节（浅琥珀） -->
+    <linearGradient id="lpLinkBack" x1="6%" y1="0%" x2="94%" y2="100%">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="1" stop-color="#FBBF24"/>
+    </linearGradient>
+    <!-- 前环：主链节（橙 → 朱红） -->
+    <linearGradient id="lpLinkFront" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#FB923C"/>
+      <stop offset="0.55" stop-color="#F97316"/>
+      <stop offset="1" stop-color="#C2410C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 两个相扣的环 = 链接 -->
+  <circle cx="35" cy="36" r="19" fill="none" stroke="url(#lpLinkBack)" stroke-width="10"/>
+  <circle cx="60" cy="59" r="19" fill="none" stroke="url(#lpLinkFront)" stroke-width="10"/>
+
+  <!-- 环内的心 = 朋友 -->
+  <path transform="translate(60 59) scale(1.328) translate(-6.4 -6.4)"
+        d="M6.4 12.9 C 2.3 9.4 1.1 6.7 1.1 4.6 C 1.1 2.2 2.9 0.5 4.9 0.5
+           C 5.8 0.5 6.2 0.9 6.4 1.3 C 6.6 0.9 7.0 0.5 7.9 0.5
+           C 9.9 0.5 11.7 2.2 11.7 4.6 C 11.7 6.7 10.5 9.4 6.4 12.9 Z"
+        fill="url(#lpLinkFront)"/>
+</svg>
